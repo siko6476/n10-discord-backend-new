@@ -240,4 +240,33 @@ app.get("/auth/discord", (req, res) => {
 
 // Discord OAuth callback
 app.get("/auth/discord/callback", async (req, res) => {
- 
+  try {
+    const { code } = req.query;
+
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        message: "Authorization code is missing"
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Discord callback received",
+      code
+    });
+
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      success: false,
+      message: "Discord authentication failed"
+    });
+  }
+});
+
+// تشغيل السيرفر
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`);
+});
