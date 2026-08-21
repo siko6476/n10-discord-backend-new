@@ -251,14 +251,64 @@ app.get("/auth/discord/callback", async (req, res) => {
       });
     }
 
+    // تحويل Discord authorization code إلى access token
+    const tokenResponse = await axios.post(
+      "https://discord.com/api/oauth2/token",
+      new URLSearchParams({
+        client_id: process.env.DISCORD_CLIENT_ID,
+        client_secret: process.env.DISCORD_CLIENT_SECRET,
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: process.env.DISCORD_REDIRECT_URI
+      }).toString(),
+      {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded"
+        }
+      }
+    );
+
+    const accessToken = tokenResponse.data.access_token;
+
+    // جلب معلومات حساب Discord
+    const userResponse = await axios.get(
+      "https://discord.com/api/users/@me",
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`
+        }
+      }
+    );
+
+    const discordUser = userResponse.data;
+
+    // توليد Access Key خاص بـ N10
+    const accessKey =
+      "N10-" + crypto.randomBytes(24).toString("hex");
+
+    accessKeys.set(accessKey, {
+      used: false,
+      discordId: discordUser.id,
+      username: discordUser.username,
+      createdAt: new Date().toISOString()
+    });
+
     res.json({
       success: true,
-      message: "Discord callback received",
-      code
+      message: "Discord login successful",
+      discordUser: {
+        id: discordUser.id,
+        username: discordUser.username,
+        email: discordUser.email || null
+      },
+      accessKey
     });
 
   } catch (error) {
-    console.error(error);
+    console.error(
+      "Discord OAuth Error:",
+      error.response?.data || error.message
+    );
 
     res.status(500).json({
       success: false,
