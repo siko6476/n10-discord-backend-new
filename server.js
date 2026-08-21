@@ -293,16 +293,18 @@ app.get("/auth/discord/callback", async (req, res) => {
       createdAt: new Date().toISOString()
     });
 
-    res.json({
-      success: true,
-      message: "Discord login successful",
-      discordUser: {
-        id: discordUser.id,
-        username: discordUser.username,
-        email: discordUser.email || null
-      },
-      accessKey
-    });
+    const FRONTEND_URL = process.env.FRONTEND_URL;
+
+if (!FRONTEND_URL) {
+  return res.status(500).json({
+    success: false,
+    message: "FRONTEND_URL is not configured"
+  });
+}
+
+res.redirect(
+  `${FRONTEND_URL}?accessKey=${encodeURIComponent(accessKey)}`
+);
 
   } catch (error) {
     console.error(
