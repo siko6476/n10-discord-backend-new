@@ -8,17 +8,21 @@ const bcrypt = require("bcryptjs");
 
 const app = express();
 
-const PORT = process.env.PORT || 3000;
+// ==================================================
+// PORT
+// ==================================================
+
+const PORT = Number(process.env.PORT) || 3000;
 
 // ==================================================
-// إعدادات Discord
+// Discord OAuth Configuration
 // ==================================================
 
 const DISCORD_CLIENT_ID =
-  process.env.DISCORD_CLIENT_ID;
+  process.env.DISCORD_CLIENT_ID || "";
 
 const DISCORD_CLIENT_SECRET =
-  process.env.DISCORD_CLIENT_SECRET;
+  process.env.DISCORD_CLIENT_SECRET || "";
 
 const DISCORD_REDIRECT_URI =
   process.env.DISCORD_REDIRECT_URI ||
@@ -29,11 +33,10 @@ const FRONTEND_URL =
   "https://siko6476.github.io/N10/";
 
 const OAUTH_STATE_SECRET =
-  process.env.OAUTH_STATE_SECRET ||
-  process.env.SESSION_SECRET;
+  process.env.OAUTH_STATE_SECRET || "";
 
 // ==================================================
-// ملفات البيانات
+// Files
 // ==================================================
 
 const ACCOUNTS_FILE =
@@ -55,23 +58,29 @@ app.use(
   })
 );
 
+app.use(
+  express.urlencoded({
+    extended: true
+  })
+);
+
 // ==================================================
 // CORS
 // ==================================================
 
 app.use((req, res, next) => {
 
-  res.header(
+  res.setHeader(
     "Access-Control-Allow-Origin",
     "*"
   );
 
-  res.header(
+  res.setHeader(
     "Access-Control-Allow-Headers",
     "Origin, X-Requested-With, Content-Type, Accept"
   );
 
-  res.header(
+  res.setHeader(
     "Access-Control-Allow-Methods",
     "GET, POST, PUT, DELETE, OPTIONS"
   );
@@ -84,10 +93,10 @@ app.use((req, res, next) => {
 });
 
 // ==================================================
-// إنشاء ملفات JSON إذا لم تكن موجودة
+// JSON File Helpers
 // ==================================================
 
-function ensureFile(file) {
+function ensureJSONFile(file) {
 
   try {
 
@@ -100,25 +109,23 @@ function ensureFile(file) {
       );
 
       console.log(
-        `Created: ${path.basename(file)}`
+        `Created ${path.basename(file)}`
       );
     }
 
   } catch (error) {
 
     console.error(
-      `Failed to create ${path.basename(file)}:`,
+      `Cannot create ${path.basename(file)}:`,
       error
     );
 
   }
 }
 
-ensureFile(ACCOUNTS_FILE);
-ensureFile(KEYS_FILE);
+ensureJSONFile(ACCOUNTS_FILE);
+ensureJSONFile(KEYS_FILE);
 
-// ==================================================
-// قراءة JSON
 // ==================================================
 
 function readJSON(file) {
@@ -148,7 +155,7 @@ function readJSON(file) {
   } catch (error) {
 
     console.error(
-      `Error reading ${path.basename(file)}:`,
+      `Cannot read ${path.basename(file)}:`,
       error
     );
 
@@ -156,8 +163,6 @@ function readJSON(file) {
   }
 }
 
-// ==================================================
-// كتابة JSON
 // ==================================================
 
 function writeJSON(file, data) {
@@ -179,7 +184,7 @@ function writeJSON(file, data) {
   } catch (error) {
 
     console.error(
-      `Error writing ${path.basename(file)}:`,
+      `Cannot write ${path.basename(file)}:`,
       error
     );
 
@@ -188,50 +193,104 @@ function writeJSON(file, data) {
 }
 
 // ==================================================
-// الصفحة الرئيسية
+// Basic Helpers
 // ==================================================
 
-app.get("/", (req, res) => {
+function createAccessKey() {
 
-  if (!fs.existsSync(INDEX_FILE)) {
+  return (
+    "N10-" +
+    crypto
+      .randomBytes(16)
+      .toString("hex")
+  );
 
-    return res.status(500).json({
-      success: false,
-      message: "index.html is missing"
+}
+
+// ==================================================
+
+function normalizeFrontendURL() {
+
+  return FRONTEND_URL.replace(
+    /\/+$/,
+    ""
+  );
+
+}
+
+// ==================================================
+// Health
+// ==================================================
+
+app.get(
+  "/health",
+  (req, res) => {
+
+    res.json({
+
+      success: true,
+
+      ok: true,
+
+      status: "online",
+
+      service:
+        "N10 Discord Backend",
+
+      version:
+        "3.0.0",
+
+      discordOAuth:
+        Boolean(
+          DISCORD_CLIENT_ID &&
+          DISCORD_CLIENT_SECRET &&
+          DISCORD_REDIRECT_URI &&
+          OAUTH_STATE_SECRET
+        )
+
     });
 
   }
-
-  res.sendFile(INDEX_FILE);
-
-});
+);
 
 // ==================================================
-// Health Check
+// Home
 // ==================================================
 
-app.get("/health", (req, res) => {
+app.get(
+  "/",
+  (req, res) => {
 
-  res.json({
+    if (
+      fs.existsSync(INDEX_FILE)
+    ) {
 
-    success: true,
+      return res.sendFile(
+        INDEX_FILE
+      );
 
-    ok: true,
+    }
 
-    status: "online",
+    return res.json({
 
-    service:
-      "N10 Discord Backend",
+      success: true,
 
-    version:
-      "2.0.0"
+      message:
+        "N10 Discord Backend is online",
 
-  });
+      health:
+        "/health",
 
-});
+      discordLogin:
+        "/auth/discord"
+
+    });
+
+  }
+);
 
 // ==================================================
-// Discord OAuth - التحقق من الإعدادات
+// OAuth Configuration Check
 // ==================================================
 
 function discordConfigReady() {
@@ -248,7 +307,7 @@ function discordConfigReady() {
 }
 
 // ==================================================
-// قراءة Cookies
+// Cookies
 // ==================================================
 
 function parseCookies(req) {
@@ -283,16 +342,28 @@ function parseCookies(req) {
           .slice(index + 1)
           .trim();
 
-      cookies[name] =
-        decodeURIComponent(value);
+      try {
+
+        cookies[name] =
+          decodeURIComponent(
+            value
+          );
+
+      } catch {
+
+        cookies[name] =
+          value;
+
+      }
 
     });
 
   return cookies;
+
 }
 
 // ==================================================
-// إنشاء Cookie للـ OAuth State
+// OAuth State Cookie
 // ==================================================
 
 function setOAuthStateCookie(
@@ -303,16 +374,19 @@ function setOAuthStateCookie(
   res.setHeader(
     "Set-Cookie",
 
-    `n10_oauth_state=${encodeURIComponent(
-      state
-    )}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`
+    [
+      `n10_oauth_state=${encodeURIComponent(state)}`,
+      "HttpOnly",
+      "Secure",
+      "SameSite=Lax",
+      "Path=/",
+      "Max-Age=600"
+    ].join("; ")
 
   );
 
 }
 
-// ==================================================
-// حذف OAuth Cookie
 // ==================================================
 
 function clearOAuthStateCookie(res) {
@@ -320,25 +394,32 @@ function clearOAuthStateCookie(res) {
   res.setHeader(
     "Set-Cookie",
 
-    "n10_oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0"
+    [
+      "n10_oauth_state=",
+      "HttpOnly",
+      "Secure",
+      "SameSite=Lax",
+      "Path=/",
+      "Max-Age=0"
+    ].join("; ")
 
   );
 
 }
 
 // ==================================================
-// إنشاء OAuth State
+// OAuth State
 // ==================================================
 
 function createOAuthState() {
 
-  const nonce =
-    crypto.randomBytes(32).toString(
-      "hex"
-    );
-
   const timestamp =
     Date.now().toString();
+
+  const nonce =
+    crypto
+      .randomBytes(32)
+      .toString("hex");
 
   const payload =
     `${timestamp}.${nonce}`;
@@ -359,8 +440,6 @@ function createOAuthState() {
 }
 
 // ==================================================
-// التحقق من OAuth State
-// ==================================================
 
 function verifyOAuthState(state) {
 
@@ -370,14 +449,20 @@ function verifyOAuthState(state) {
       !state ||
       !OAUTH_STATE_SECRET
     ) {
+
       return false;
+
     }
 
     const parts =
       state.split(".");
 
-    if (parts.length !== 3) {
+    if (
+      parts.length !== 3
+    ) {
+
       return false;
+
     }
 
     const timestamp =
@@ -394,7 +479,9 @@ function verifyOAuthState(state) {
       !nonce ||
       !signature
     ) {
+
       return false;
+
     }
 
     const payload =
@@ -409,32 +496,35 @@ function verifyOAuthState(state) {
         .update(payload)
         .digest("hex");
 
-    const providedBuffer =
+    const a =
       Buffer.from(
         signature,
         "utf8"
       );
 
-    const expectedBuffer =
+    const b =
       Buffer.from(
         expectedSignature,
         "utf8"
       );
 
     if (
-      providedBuffer.length !==
-      expectedBuffer.length
+      a.length !== b.length
     ) {
+
       return false;
+
     }
 
     if (
       !crypto.timingSafeEqual(
-        providedBuffer,
-        expectedBuffer
+        a,
+        b
       )
     ) {
+
       return false;
+
     }
 
     const createdAt =
@@ -443,18 +533,21 @@ function verifyOAuthState(state) {
     if (
       !Number.isFinite(createdAt)
     ) {
+
       return false;
+
     }
 
     const age =
       Date.now() - createdAt;
 
-    // صلاحية State = 10 دقائق
     if (
       age < 0 ||
       age > 10 * 60 * 1000
     ) {
+
       return false;
+
     }
 
     return true;
@@ -462,11 +555,12 @@ function verifyOAuthState(state) {
   } catch (error) {
 
     console.error(
-      "OAuth State Error:",
+      "OAuth State verification error:",
       error
     );
 
     return false;
+
   }
 
 }
@@ -479,11 +573,13 @@ app.get(
   "/auth/discord",
   (req, res) => {
 
-    if (!discordConfigReady()) {
+    if (
+      !discordConfigReady()
+    ) {
 
       return res.status(500).send(
 
-        "Discord OAuth غير مضبوط في Render. تأكد من DISCORD_CLIENT_ID و DISCORD_CLIENT_SECRET و DISCORD_REDIRECT_URI و OAUTH_STATE_SECRET."
+        "Discord OAuth غير مضبوط. تأكد من DISCORD_CLIENT_ID و DISCORD_CLIENT_SECRET و DISCORD_REDIRECT_URI و OAUTH_STATE_SECRET في Render."
 
       );
 
@@ -517,11 +613,12 @@ app.get(
 
       });
 
-    const discordAuthorizeUrl =
-      `https://discord.com/oauth2/authorize?${params.toString()}`;
+    const url =
+      "https://discord.com/oauth2/authorize?" +
+      params.toString();
 
     return res.redirect(
-      discordAuthorizeUrl
+      url
     );
 
   }
@@ -536,6 +633,26 @@ app.get(
   async (req, res) => {
 
     try {
+
+      // ------------------------------------------------
+      // Configuration
+      // ------------------------------------------------
+
+      if (
+        !discordConfigReady()
+      ) {
+
+        return res.status(500).send(
+
+          "Discord OAuth غير مضبوط على السيرفر."
+
+        );
+
+      }
+
+      // ------------------------------------------------
+      // Query
+      // ------------------------------------------------
 
       const code =
         typeof req.query.code ===
@@ -555,8 +672,13 @@ app.get(
           ? req.query.error
           : "";
 
-      // المستخدم ألغى Discord
-      if (discordError) {
+      // ------------------------------------------------
+      // Discord Error
+      // ------------------------------------------------
+
+      if (
+        discordError
+      ) {
 
         clearOAuthStateCookie(
           res
@@ -564,7 +686,7 @@ app.get(
 
         return res.redirect(
 
-          `${FRONTEND_URL}?discordError=${encodeURIComponent(
+          `${normalizeFrontendURL()}?discordError=${encodeURIComponent(
             "تم إلغاء تسجيل الدخول عبر Discord"
           )}`
 
@@ -572,13 +694,23 @@ app.get(
 
       }
 
+      // ------------------------------------------------
+      // Code
+      // ------------------------------------------------
+
       if (!code) {
 
         return res.status(400).send(
+
           "Discord لم يرسل Authorization Code."
+
         );
 
       }
+
+      // ------------------------------------------------
+      // Cookie
+      // ------------------------------------------------
 
       const cookies =
         parseCookies(req);
@@ -587,13 +719,15 @@ app.get(
         cookies.n10_oauth_state ||
         "";
 
-      // التحقق من State
+      // ------------------------------------------------
+      // Verify State
+      // ------------------------------------------------
+
       if (
 
         !savedState ||
         !returnedState ||
-        savedState !==
-          returnedState ||
+        savedState !== returnedState ||
         !verifyOAuthState(
           returnedState
         )
@@ -606,7 +740,7 @@ app.get(
 
         return res.status(400).send(
 
-          "OAuth State غير صالح أو منتهي. أعد محاولة تسجيل الدخول من الموقع."
+          "OAuth State غير صالح أو منتهي. أعد تسجيل الدخول من الموقع."
 
         );
 
@@ -617,11 +751,17 @@ app.get(
       );
 
       // ==================================================
-      // تحويل Code إلى Access Token
+      // Exchange Code for Token
       // ==================================================
 
       const tokenBody =
         new URLSearchParams({
+
+          client_id:
+            DISCORD_CLIENT_ID,
+
+          client_secret:
+            DISCORD_CLIENT_SECRET,
 
           grant_type:
             "authorization_code",
@@ -637,7 +777,7 @@ app.get(
       const tokenResponse =
         await fetch(
 
-          "https://discord.com/api/oauth2/token",
+          "https://discord.com/api/v10/oauth2/token",
 
           {
 
@@ -650,15 +790,7 @@ app.get(
                 "application/x-www-form-urlencoded",
 
               Accept:
-                "application/json",
-
-              Authorization:
-                "Basic " +
-                Buffer.from(
-
-                  `${DISCORD_CLIENT_ID}:${DISCORD_CLIENT_SECRET}`
-
-                ).toString("base64")
+                "application/json"
 
             },
 
@@ -686,20 +818,20 @@ app.get(
 
         return res.status(502).send(
 
-          "فشل الاتصال بـ Discord أثناء تسجيل الدخول."
+          "فشل الحصول على Access Token من Discord."
 
         );
 
       }
 
       // ==================================================
-      // جلب معلومات مستخدم Discord
+      // Get Discord User
       // ==================================================
 
       const userResponse =
         await fetch(
 
-          "https://discord.com/api/users/@me",
+          "https://discord.com/api/v10/users/@me",
 
           {
 
@@ -743,8 +875,14 @@ app.get(
 
       }
 
+      console.log(
+        "Discord login:",
+        discordUser.username,
+        discordUser.id
+      );
+
       // ==================================================
-      // قراءة الحسابات والمفاتيح
+      // Read Data
       // ==================================================
 
       const accounts =
@@ -758,23 +896,18 @@ app.get(
         );
 
       // ==================================================
-      // البحث عن Discord ID
+      // Existing Account
       // ==================================================
 
       const accountIndex =
         accounts.findIndex(
 
           (account) =>
-
             account &&
             account.discordId ===
               discordUser.id
 
         );
-
-      // ==================================================
-      // الحساب موجود
-      // ==================================================
 
       if (
         accountIndex !== -1
@@ -800,6 +933,15 @@ app.get(
         account.lastLoginAt =
           new Date().toISOString();
 
+        if (
+          !account.accessKey
+        ) {
+
+          account.accessKey =
+            createAccessKey();
+
+        }
+
         const saved =
           writeJSON(
             ACCOUNTS_FILE,
@@ -810,17 +952,7 @@ app.get(
 
           return res.status(500).send(
 
-            "تعذر حفظ معلومات تسجيل الدخول."
-
-          );
-
-        }
-
-        if (!account.accessKey) {
-
-          return res.status(500).send(
-
-            "الحساب موجود ولكن لا يوجد Access Key."
+            "تعذر حفظ حساب Discord."
 
           );
 
@@ -828,7 +960,7 @@ app.get(
 
         return res.redirect(
 
-          `${FRONTEND_URL}?accessKey=${encodeURIComponent(
+          `${normalizeFrontendURL()}?accessKey=${encodeURIComponent(
             account.accessKey
           )}`
 
@@ -837,58 +969,75 @@ app.get(
       }
 
       // ==================================================
-      // حساب Discord جديد
+      // New Discord Account
       // ==================================================
 
-      const keyIndex =
+      let selectedKey = "";
+
+      let keyIndex =
         keys.findIndex(
 
           (item) =>
-
             item &&
-            typeof item.key ===
-              "string" &&
+            typeof item.key === "string" &&
             item.used === false
 
         );
 
-      // لا توجد مفاتيح
-      if (keyIndex === -1) {
+      // ==================================================
+      // If no key exists, create one automatically
+      // ==================================================
 
-        return res.status(403).send(
+      if (
+        keyIndex === -1
+      ) {
 
-          "تم تسجيل الدخول إلى Discord بنجاح، لكن لا توجد Access Keys متاحة حالياً. يجب على الإدارة إنشاء مفتاح جديد."
+        selectedKey =
+          createAccessKey();
 
-        );
+        keys.push({
+
+          key:
+            selectedKey,
+
+          used:
+            false,
+
+          createdAt:
+            new Date().toISOString(),
+
+          generatedFor:
+            "discord-auto"
+
+        });
+
+        keyIndex =
+          keys.length - 1;
+
+      } else {
+
+        selectedKey =
+          keys[keyIndex].key;
 
       }
 
-      const selectedKey =
-        keys[keyIndex].key;
+      // ==================================================
+      // Username
+      // ==================================================
 
-      // ==================================================
-      // إنشاء Username
-      // ==================================================
+      const rawName =
+        discordUser.global_name ||
+        discordUser.username ||
+        `discord_${discordUser.id}`;
 
       const baseUsername =
-
-        (
-
-          discordUser.global_name ||
-          discordUser.username ||
-          `discord_${discordUser.id}`
-
-        )
-
+        String(rawName)
           .trim()
-
           .replace(
             /[^a-zA-Z0-9_-]/g,
             "_"
           )
-
           .slice(0, 20) ||
-
         `discord_${discordUser.id}`;
 
       let username =
@@ -922,7 +1071,7 @@ app.get(
       }
 
       // ==================================================
-      // كلمة مرور عشوائية للحساب
+      // Random Password
       // ==================================================
 
       const randomPassword =
@@ -940,7 +1089,7 @@ app.get(
         new Date().toISOString();
 
       // ==================================================
-      // إنشاء الحساب
+      // Account
       // ==================================================
 
       const newAccount = {
@@ -985,7 +1134,7 @@ app.get(
       );
 
       // ==================================================
-      // استعمال Access Key
+      // Mark Key Used
       // ==================================================
 
       keys[keyIndex].used =
@@ -1001,7 +1150,7 @@ app.get(
         now;
 
       // ==================================================
-      // حفظ الحساب
+      // Save Accounts
       // ==================================================
 
       const accountsSaved =
@@ -1021,7 +1170,7 @@ app.get(
       }
 
       // ==================================================
-      // حفظ المفتاح
+      // Save Keys
       // ==================================================
 
       const keysSaved =
@@ -1032,7 +1181,6 @@ app.get(
 
       if (!keysSaved) {
 
-        // Rollback
         accounts.pop();
 
         writeJSON(
@@ -1049,12 +1197,16 @@ app.get(
       }
 
       // ==================================================
-      // نجاح
+      // Success
       // ==================================================
+
+      console.log(
+        `Discord account created: ${username}`
+      );
 
       return res.redirect(
 
-        `${FRONTEND_URL}?accessKey=${encodeURIComponent(
+        `${normalizeFrontendURL()}?accessKey=${encodeURIComponent(
           selectedKey
         )}`
 
@@ -1079,10 +1231,10 @@ app.get(
 );
 
 // ==================================================
-// إنشاء Access Key
+// Create Access Key - Admin
 // ==================================================
 
-async function createAccessKey(
+async function createAdminKey(
   req,
   res
 ) {
@@ -1090,7 +1242,8 @@ async function createAccessKey(
   try {
 
     const adminKey =
-      process.env.ADMIN_KEY;
+      process.env.ADMIN_KEY ||
+      "";
 
     if (!adminKey) {
 
@@ -1099,7 +1252,7 @@ async function createAccessKey(
         success: false,
 
         message:
-          "ADMIN_KEY is not configured on the server"
+          "ADMIN_KEY غير مضبوط في Render"
 
       });
 
@@ -1109,20 +1262,13 @@ async function createAccessKey(
       req.body || {};
 
     const providedAdminKey =
-
-      typeof body.adminKey ===
-      "string"
-
+      typeof body.adminKey === "string"
         ? body.adminKey.trim()
-
         : "";
 
     if (
-
       !providedAdminKey ||
-      providedAdminKey !==
-        adminKey
-
+      providedAdminKey !== adminKey
     ) {
 
       return res.status(401).json({
@@ -1137,11 +1283,7 @@ async function createAccessKey(
     }
 
     const key =
-
-      "N10-" +
-      crypto
-        .randomBytes(16)
-        .toString("hex");
+      createAccessKey();
 
     const keys =
       readJSON(
@@ -1157,7 +1299,10 @@ async function createAccessKey(
         false,
 
       createdAt:
-        new Date().toISOString()
+        new Date().toISOString(),
+
+      generatedBy:
+        "admin"
 
     });
 
@@ -1211,12 +1356,12 @@ async function createAccessKey(
 
 app.post(
   "/admin/create-key",
-  createAccessKey
+  createAdminKey
 );
 
 app.post(
   "/api/admin/create-key",
-  createAccessKey
+  createAdminKey
 );
 
 // ==================================================
@@ -1234,38 +1379,24 @@ async function register(
       req.body || {};
 
     const username =
-
-      typeof body.username ===
-      "string"
-
+      typeof body.username === "string"
         ? body.username.trim()
-
         : "";
 
     const password =
-
-      typeof body.password ===
-      "string"
-
+      typeof body.password === "string"
         ? body.password
-
         : "";
 
     const accessKey =
-
-      typeof body.accessKey ===
-      "string"
-
+      typeof body.accessKey === "string"
         ? body.accessKey.trim()
-
         : "";
 
     if (
-
       !username ||
       !password ||
       !accessKey
-
     ) {
 
       return res.status(400).json({
@@ -1280,10 +1411,8 @@ async function register(
     }
 
     if (
-
       username.length < 3 ||
       username.length > 24
-
     ) {
 
       return res.status(400).json({
@@ -1322,23 +1451,27 @@ async function register(
         KEYS_FILE
       );
 
+    // ------------------------------------------------
+    // Username exists
+    // ------------------------------------------------
+
     const usernameExists =
       accounts.some(
 
         (account) =>
 
           account &&
-
           typeof account.username ===
             "string" &&
-
           account.username
             .toLowerCase() ===
             username.toLowerCase()
 
       );
 
-    if (usernameExists) {
+    if (
+      usernameExists
+    ) {
 
       return res.status(409).json({
 
@@ -1351,19 +1484,24 @@ async function register(
 
     }
 
+    // ------------------------------------------------
+    // Key
+    // ------------------------------------------------
+
     const keyIndex =
       keys.findIndex(
 
         (item) =>
 
           item &&
-          item.key ===
-            accessKey &&
+          item.key === accessKey &&
           item.used === false
 
       );
 
-    if (keyIndex === -1) {
+    if (
+      keyIndex === -1
+    ) {
 
       return res.status(403).json({
 
@@ -1376,11 +1514,18 @@ async function register(
 
     }
 
+    // ------------------------------------------------
+    // Password
+    // ------------------------------------------------
+
     const passwordHash =
       await bcrypt.hash(
         password,
         12
       );
+
+    const now =
+      new Date().toISOString();
 
     const account = {
 
@@ -1397,13 +1542,17 @@ async function register(
         "password",
 
       createdAt:
-        new Date().toISOString()
+        now
 
     };
 
     accounts.push(
       account
     );
+
+    // ------------------------------------------------
+    // Mark key
+    // ------------------------------------------------
 
     keys[keyIndex].used =
       true;
@@ -1412,7 +1561,11 @@ async function register(
       username;
 
     keys[keyIndex].usedAt =
-      new Date().toISOString();
+      now;
+
+    // ------------------------------------------------
+    // Save account
+    // ------------------------------------------------
 
     const accountsSaved =
       writeJSON(
@@ -1432,6 +1585,10 @@ async function register(
       });
 
     }
+
+    // ------------------------------------------------
+    // Save key
+    // ------------------------------------------------
 
     const keysSaved =
       writeJSON(
@@ -1474,7 +1631,10 @@ async function register(
         accessKey:
           accessKey
 
-      }
+      },
+
+      accessKey:
+        accessKey
 
     });
 
@@ -1523,21 +1683,13 @@ async function login(
       req.body || {};
 
     const username =
-
-      typeof body.username ===
-      "string"
-
+      typeof body.username === "string"
         ? body.username.trim()
-
         : "";
 
     const password =
-
-      typeof body.password ===
-      "string"
-
+      typeof body.password === "string"
         ? body.password
-
         : "";
 
     if (
@@ -1567,10 +1719,8 @@ async function login(
         (item) =>
 
           item &&
-
           typeof item.username ===
             "string" &&
-
           item.username
             .toLowerCase() ===
             username.toLowerCase()
@@ -1590,12 +1740,14 @@ async function login(
 
     }
 
-    // حساب Discord يدخل عبر Discord
+    // ------------------------------------------------
+    // Discord account
+    // ------------------------------------------------
+
     if (
 
       account.authProvider ===
         "discord" &&
-
       account.discordId
 
     ) {
@@ -1611,7 +1763,13 @@ async function login(
 
     }
 
-    if (!account.password) {
+    // ------------------------------------------------
+    // Password
+    // ------------------------------------------------
+
+    if (
+      !account.password
+    ) {
 
       return res.status(401).json({
 
@@ -1626,11 +1784,8 @@ async function login(
 
     const passwordCorrect =
       await bcrypt.compare(
-
         password,
-
         account.password
-
       );
 
     if (!passwordCorrect) {
@@ -1724,12 +1879,7 @@ app.use(
 // ==================================================
 
 app.use(
-  (
-    err,
-    req,
-    res,
-    next
-  ) => {
+  (err, req, res, next) => {
 
     console.error(
       "Server Error:",
@@ -1749,7 +1899,7 @@ app.use(
 );
 
 // ==================================================
-// تشغيل السيرفر
+// Start Server
 // ==================================================
 
 app.listen(
@@ -1758,7 +1908,27 @@ app.listen(
   () => {
 
     console.log(
-      `N10 Discord Backend running on port ${PORT}`
+      "======================================"
+    );
+
+    console.log(
+      "N10 Discord Backend"
+    );
+
+    console.log(
+      `Port: ${PORT}`
+    );
+
+    console.log(
+      `Frontend: ${FRONTEND_URL}`
+    );
+
+    console.log(
+      `Discord Redirect: ${DISCORD_REDIRECT_URI}`
+    );
+
+    console.log(
+      `OAuth configured: ${discordConfigReady()}`
     );
 
     console.log(
@@ -1766,11 +1936,11 @@ app.listen(
     );
 
     console.log(
-      "Discord OAuth: /auth/discord"
+      "Discord Login: /auth/discord"
     );
 
     console.log(
-      "Discord Callback: /auth/discord/callback"
+      "======================================"
     );
 
   }
