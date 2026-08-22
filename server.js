@@ -1,301 +1,580 @@
-<!DOCTYPE html>
-<html lang="ar" dir="rtl">
+require("dotenv").config();
 
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>N10 SERVER MENA</title>
+const express = require("express");
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+const bcrypt = require("bcryptjs");
 
-  <style>
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-      font-family: Arial, sans-serif;
+const app = express();
+
+const PORT = process.env.PORT || 3000;
+
+// =========================
+// ملفات البيانات
+// =========================
+
+const ACCOUNTS_FILE = path.join(__dirname, "accounts.json");
+const KEYS_FILE = path.join(__dirname, "keys.json");
+const INDEX_FILE = path.join(__dirname, "index.html");
+
+// =========================
+// Middleware
+// =========================
+
+app.use(express.json({ limit: "1mb" }));
+
+// =========================
+// CORS
+// =========================
+
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Origin, X-Requested-With, Content-Type, Accept"
+  );
+  res.header(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, OPTIONS"
+  );
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
+// =========================
+// ملفات JSON
+// =========================
+
+function ensureFile(file) {
+  try {
+    if (!fs.existsSync(file)) {
+      fs.writeFileSync(file, "[]", "utf8");
+      console.log(`Created: ${path.basename(file)}`);
+    }
+  } catch (error) {
+    console.error(
+      `Failed to create ${path.basename(file)}:`,
+      error
+    );
+  }
+}
+
+ensureFile(ACCOUNTS_FILE);
+ensureFile(KEYS_FILE);
+
+// =========================
+// قراءة JSON
+// =========================
+
+function readJSON(file) {
+  try {
+    if (!fs.existsSync(file)) {
+      return [];
     }
 
-    body {
-      min-height: 100vh;
-      background:
-        radial-gradient(
-          circle at top,
-          #123b70 0%,
-          #071525 45%,
-          #03070d 100%
-        );
-      color: white;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      padding: 20px;
+    const content = fs
+      .readFileSync(file, "utf8")
+      .trim();
+
+    if (!content) {
+      return [];
     }
 
-    .container {
-      width: 100%;
-      max-width: 430px;
-      background: rgba(8, 20, 36, 0.94);
-      border: 1px solid #168cff;
-      border-radius: 24px;
-      padding: 30px 22px;
-      box-shadow: 0 0 35px rgba(0, 140, 255, 0.25);
-      text-align: center;
+    const data = JSON.parse(content);
+
+    return Array.isArray(data) ? data : [];
+  } catch (error) {
+    console.error(
+      `Error reading ${path.basename(file)}:`,
+      error
+    );
+
+    return [];
+  }
+}
+
+// =========================
+// كتابة JSON
+// =========================
+
+function writeJSON(file, data) {
+  try {
+    fs.writeFileSync(
+      file,
+      JSON.stringify(data, null, 2),
+      "utf8"
+    );
+
+    return true;
+  } catch (error) {
+    console.error(
+      `Error writing ${path.basename(file)}:`,
+      error
+    );
+
+    return false;
+  }
+}
+
+// =========================
+// الصفحة الرئيسية
+// =========================
+
+app.get("/", (req, res) => {
+  if (!fs.existsSync(INDEX_FILE)) {
+    return res.status(500).json({
+      success: false,
+      message: "index.html is missing"
+    });
+  }
+
+  res.sendFile(INDEX_FILE);
+});
+
+// =========================
+// Health Check
+// =========================
+
+app.get("/health", (req, res) => {
+  res.json({
+    success: true,
+    ok: true,
+    status: "online",
+    service: "N10 Discord Backend",
+    version: "1.0.0"
+  });
+});
+
+// =========================
+// إنشاء Access Key
+// =========================
+
+async function createAccessKey(req, res) {
+  try {
+    const adminKey = process.env.ADMIN_KEY;
+
+    if (!adminKey) {
+      return res.status(500).json({
+        success: false,
+        message:
+          "ADMIN_KEY is not configured on the server"
+      });
     }
 
-    .logo {
-      width: 95px;
-      height: 95px;
-      margin: 0 auto 18px;
-      border-radius: 24px;
-      background: linear-gradient(145deg, #168cff, #0051a8);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 42px;
-      font-weight: bold;
-      box-shadow: 0 0 25px rgba(22, 140, 255, 0.45);
+    const body = req.body || {};
+
+    const providedAdminKey =
+      typeof body.adminKey === "string"
+        ? body.adminKey.trim()
+        : "";
+
+    if (
+      !providedAdminKey ||
+      providedAdminKey !== adminKey
+    ) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized"
+      });
     }
 
-    .key-icon {
-      font-size: 48px;
+    const key =
+      "N10-" +
+      crypto.randomBytes(16).toString("hex");
+
+    const keys = readJSON(KEYS_FILE);
+
+    keys.push({
+      key: key,
+      used: false,
+      createdAt: new Date().toISOString()
+    });
+
+    const saved = writeJSON(
+      KEYS_FILE,
+      keys
+    );
+
+    if (!saved) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to save access key"
+      });
     }
 
-    h1 {
-      color: #42a5ff;
-      font-size: 28px;
-      margin-bottom: 8px;
+    return res.status(201).json({
+      success: true,
+      accessKey: key
+    });
+  } catch (error) {
+    console.error(
+      "Create Key Error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
+  }
+}
+
+app.post(
+  "/admin/create-key",
+  createAccessKey
+);
+
+app.post(
+  "/api/admin/create-key",
+  createAccessKey
+);
+
+// =========================
+// Register
+// =========================
+
+async function register(req, res) {
+  try {
+    const body = req.body || {};
+
+    const username =
+      typeof body.username === "string"
+        ? body.username.trim()
+        : "";
+
+    const password =
+      typeof body.password === "string"
+        ? body.password
+        : "";
+
+    const accessKey =
+      typeof body.accessKey === "string"
+        ? body.accessKey.trim()
+        : "";
+
+    if (
+      !username ||
+      !password ||
+      !accessKey
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "اسم المستخدم وكلمة المرور و Access Key مطلوبة"
+      });
     }
 
-    .subtitle {
-      color: #a9c9e8;
-      font-size: 14px;
-      margin-bottom: 28px;
+    if (
+      username.length < 3 ||
+      username.length > 24
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "اسم المستخدم يجب أن يكون بين 3 و 24 حرفاً"
+      });
     }
 
-    .card {
-      background: rgba(255, 255, 255, 0.04);
-      border-radius: 16px;
-      padding: 18px;
-      margin-bottom: 16px;
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "كلمة المرور يجب أن تكون 6 أحرف على الأقل"
+      });
     }
 
-    .card h2 {
-      color: #42a5ff;
-      margin-bottom: 10px;
+    const accounts =
+      readJSON(ACCOUNTS_FILE);
+
+    const keys =
+      readJSON(KEYS_FILE);
+
+    // =========================
+    // التحقق من Username
+    // =========================
+
+    const usernameExists =
+      accounts.some(
+        (account) =>
+          account &&
+          typeof account.username === "string" &&
+          account.username.toLowerCase() ===
+            username.toLowerCase()
+      );
+
+    if (usernameExists) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "اسم المستخدم موجود بالفعل"
+      });
     }
 
-    .card p {
-      color: #c8d9e8;
-      font-size: 14px;
-      line-height: 1.7;
+    // =========================
+    // التحقق من Access Key
+    // =========================
+
+    const keyIndex =
+      keys.findIndex(
+        (item) =>
+          item &&
+          item.key === accessKey &&
+          item.used === false
+      );
+
+    if (keyIndex === -1) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access Key غير صالح أو تم استعماله من قبل"
+      });
     }
 
-    .btn {
-      display: block;
-      width: 100%;
-      padding: 14px;
-      margin-top: 12px;
-      border: none;
-      border-radius: 14px;
-      background: #168cff;
-      color: white;
-      text-decoration: none;
-      font-weight: bold;
-      font-size: 16px;
-      cursor: pointer;
+    // =========================
+    // تشفير كلمة المرور
+    // =========================
+
+    const passwordHash =
+      await bcrypt.hash(
+        password,
+        12
+      );
+
+    // =========================
+    // إنشاء الحساب
+    // =========================
+
+    const account = {
+      username: username,
+      password: passwordHash,
+      accessKey: accessKey,
+      createdAt:
+        new Date().toISOString()
+    };
+
+    accounts.push(account);
+
+    // =========================
+    // استعمال المفتاح
+    // =========================
+
+    keys[keyIndex].used = true;
+    keys[keyIndex].usedBy = username;
+    keys[keyIndex].usedAt =
+      new Date().toISOString();
+
+    // =========================
+    // حفظ الحسابات
+    // =========================
+
+    const accountsSaved =
+      writeJSON(
+        ACCOUNTS_FILE,
+        accounts
+      );
+
+    if (!accountsSaved) {
+      return res.status(500).json({
+        success: false,
+        message:
+          "Failed to save account data"
+      });
     }
 
-    .btn:hover {
-      background: #087de8;
+    // =========================
+    // حفظ المفاتيح
+    // =========================
+
+    const keysSaved =
+      writeJSON(
+        KEYS_FILE,
+        keys
+      );
+
+    if (!keysSaved) {
+      return res.status(500).json({
+        success: false,
+        message:
+          "Failed to save key data"
+      });
     }
 
-    .key-box {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-top: 15px;
-    }
-
-    .key-input {
-      flex: 1;
-      min-width: 0;
-      padding: 13px 10px;
-      border: 1px solid #168cff;
-      border-radius: 12px;
-      background: #071525;
-      color: white;
-      font-size: 13px;
-      text-align: center;
-      direction: ltr;
-    }
-
-    .copy-btn {
-      width: auto;
-      margin: 0;
-      padding: 13px 15px;
-      white-space: nowrap;
-    }
-
-    .success {
-      color: #42a5ff;
-      font-weight: bold;
-      margin-bottom: 8px;
-    }
-
-    .hidden {
-      display: none;
-    }
-  </style>
-</head>
-
-<body>
-
-  <div class="container">
-
-    <!-- الشعار -->
-    <div class="logo" id="logo">
-      N10
-    </div>
-
-    <h1>N10 SERVER MENA</h1>
-
-    <p class="subtitle">
-      مرحباً بكم في N10 SERVER MENA
-    </p>
-
-    <!-- الصفحة الرئيسية -->
-    <div id="home">
-
-      <div class="card">
-        <h2>أهلاً وسهلاً 👋</h2>
-
-        <p>
-          هذا هو الموقع الرسمي لـ N10 SERVER MENA.
-        </p>
-      </div>
-
-      <div class="card">
-        <h2>السيرفر</h2>
-
-        <p>
-          للدخول إلى السيرفر، قم بتسجيل الدخول بحساب Discord الخاص بك.
-        </p>
-
-        <a
-          class="btn"
-          href="https://n10-discord-backend-new.onrender.com/auth/discord"
-        >
-          دخول السيرفر
-        </a>
-      </div>
-
-    </div>
-
-    <!-- صفحة المفتاح -->
-    <div id="keyPage" class="card hidden">
-
-      <div class="success">
-        ✅ تم تسجيل الدخول بنجاح
-      </div>
-
-      <h2>🔑 مفتاح التفعيل</h2>
-
-      <p>
-        هذا هو مفتاح التفعيل الخاص بك:
-      </p>
-
-      <div class="key-box">
-
-        <input
-          id="accessKey"
-          class="key-input"
-          type="text"
-          readonly
-        >
-
-        <button
-          class="btn copy-btn"
-          onclick="copyKey()"
-        >
-          📋 نسخ
-        </button>
-
-      </div>
-
-<p
-        id="copyMessage"
-        style="margin-top:12px;"
-      ></p>
-
-    </div>
-
-  </div>
-
-  <script>
-
-    /* قراءة مفتاح التفعيل من الرابط */
-    const params = new URLSearchParams(window.location.search);
-    const accessKey = params.get("accessKey");
-
-    /* إذا كان هناك مفتاح، نعرض صفحة المفتاح */
-    if (accessKey) {
-
-      document
-        .getElementById("home")
-        .classList
-        .add("hidden");
-
-      document
-        .getElementById("keyPage")
-        .classList
-        .remove("hidden");
-
-      /* تغيير الشعار إلى مفتاح */
-      document
-        .getElementById("logo")
-        .innerHTML =
-        '<span class="key-icon">🔑</span>';
-
-      /* وضع المفتاح داخل الخانة */
-      document
-        .getElementById("accessKey")
-        .value = accessKey;
-    }
-
-    /* نسخ المفتاح */
-    async function copyKey() {
-
-      const key =
-        document
-          .getElementById("accessKey")
-          .value;
-
-      try {
-
-        await navigator.clipboard.writeText(key);
-
-        document
-          .getElementById("copyMessage")
-          .textContent =
-          "✅ تم نسخ المفتاح";
-
-      } catch (error) {
-
-        const input =
-          document
-            .getElementById("accessKey");
-
-        input.select();
-
-        document.execCommand("copy");
-
-        document
-          .getElementById("copyMessage")
-          .textContent =
-          "✅ تم نسخ المفتاح";
+    return res.status(201).json({
+      success: true,
+      message:
+        "Account created successfully",
+      user: {
+        username: username,
+        accessKey: accessKey
       }
+    });
+  } catch (error) {
+    console.error(
+      "Register Error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
+  }
+}
+
+app.post(
+  "/register",
+  register
+);
+
+app.post(
+  "/api/register",
+  register
+);
+
+// =========================
+// Login
+// =========================
+
+async function login(req, res) {
+  try {
+    const body = req.body || {};
+
+    const username =
+      typeof body.username === "string"
+        ? body.username.trim()
+        : "";
+
+    const password =
+      typeof body.password === "string"
+        ? body.password
+        : "";
+
+    if (!username || !password) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Username and password are required"
+      });
     }
 
-  </script>
+    const accounts =
+      readJSON(ACCOUNTS_FILE);
 
-</body>
-</html>
+    const account =
+      accounts.find(
+        (item) =>
+          item &&
+          typeof item.username === "string" &&
+          item.username.toLowerCase() ===
+            username.toLowerCase()
+      );
+
+    if (!account) {
+      return res.status(401).json({
+        success: false,
+        message:
+          "اسم المستخدم أو كلمة المرور غير صحيحة"
+      });
+    }
+
+    const passwordCorrect =
+      await bcrypt.compare(
+        password,
+        account.password
+      );
+
+    if (!passwordCorrect) {
+      return res.status(401).json({
+        success: false,
+        message:
+          "اسم المستخدم أو كلمة المرور غير صحيحة"
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Login successful",
+      user: {
+        username: account.username,
+        accessKey:
+          account.accessKey || null
+      },
+      accessKey:
+        account.accessKey || null
+    });
+  } catch (error) {
+    console.error(
+      "Login Error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error"
+    });
+  }
+}
+
+app.post(
+  "/login",
+  login
+);
+
+app.post(
+  "/api/login",
+  login
+);
+
+// =========================
+// 404
+// =========================
+
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message:
+      `Route not found: ${req.method} ${req.originalUrl}`
+  });
+});
+
+// =========================
+// Error Handler
+// =========================
+
+app.use(
+  (err, req, res, next) => {
+    console.error(
+      "Server Error:",
+      err
+    );
+
+    res.status(500).json({
+      success: false,
+      message:
+        "Internal server error"
+    });
+  }
+);
+
+// =========================
+// تشغيل السيرفر
+// =========================
+
+app.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
+    console.log(
+      `N10 Discord Backend running on port ${PORT}`
+    );
+
+    console.log(
+      `Health: /health`
+    );
+  }
+);
