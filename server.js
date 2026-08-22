@@ -167,42 +167,180 @@ app.post("/api/register", async (req, res) => {
   }
 });
 
+// تسجيل مستخدم جديد
+app.post("/api/register", async (req, res) => {
+  try {
+    const {
+      username,
+      password,
+      confirmPassword,
+      accessKey
+    } = req.body;
+
+    const cleanUsername = String(username || "").trim();
+    const cleanAccessKey = String(accessKey || "").trim();
+
+    if (!cleanUsername || !password || !confirmPassword || !cleanAccessKey) {
+      return res.status(400).json({
+        success: false,
+        message: "All fields are required"
+      });
+    }
+
+    if (cleanUsername.length < 3) {
+      return res.status(400).json({
+        success: false,
+        message: "Username must contain at least 3 characters"
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must contain at least 6 characters"
+      });
+    }
+
+    if (password !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Passwords do not match"
+      });
+    }
+
+    // التحقق من Access Key
+    const keyInfo = accessKeys.get(cleanAccessKey);
+
+    if (!keyInfo) {
+      return res.status(403).json({
+        success: false,
+        message: "Invalid access key"
+      });
+    }
+
+    if (keyInfo.used) {
+      return res.status(403).json({
+        success: false,
+        message: "This access key has already been used"
+      });
+    }
+
+    // التحقق من اسم المستخدم
+    const existingUser = users.find(
+      user =>
+        user.username.toLowerCase() ===
+        cleanUsername.toLowerCase()
+    );
+
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        message: "Username already exists"
+      });
+    }
+
+    // تشفير كلمة المرور
+    const hashedPassword = await bcrypt.hash(
+      password,
+      12
+    );
+
+    // إنشاء المستخدم
+    const newUser = {
+      id: crypto.randomUUID(),
+      username: cleanUsername,
+      password: hashedPassword,
+      createdAt: new Date().toISOString()
+    };
+
+    users.push(newUser);
+
+    // جعل المفتاح مستعملاً
+    keyInfo.used = true;
+    keyInfo.usedAt = new Date().toISOString();
+
+    console.log(
+      `Account created: ${newUser.username}`
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: "Account created successfully",
+      user: {
+        id: newUser.id,
+        username: newUser.username
+      }
+    });
+
+  } catch (error) {
+    console.error("REGISTER ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error"
+    });
+  }
+});
+
+
 // تسجيل الدخول
 app.post("/api/login", async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const {
+      username,
+      password
+    } = req.body;
 
-    if (!username || !password) {
+    const cleanUsername = String(username || "").trim();
+
+    if (!cleanUsername || !password) {
       return res.status(400).json({
         success: false,
         message: "Username and password are required"
       });
     }
 
+    // البحث عن المستخدم
     const user = users.find(
-      u => u.username.toLowerCase() === username.toLowerCase()
+      u =>
+        u.username.toLowerCase() ===
+        cleanUsername.toLowerCase()
     );
 
     if (!user) {
+      console.log(
+        `LOGIN: user not found -> ${cleanUsername}`
+      );
+
       return res.status(401).json({
         success: false,
         message: "Invalid username or password"
       });
     }
 
-    const passwordCorrect = await bcrypt.compare(
-      password,
-      user.password
-    );
+    // مقارنة كلمة المرور المشفرة
+    const passwordCorrect =
+      await bcrypt.compare(
+        password,
+        user.password
+      );
 
     if (!passwordCorrect) {
+      console.log(
+        `LOGIN: wrong password -> ${cleanUsername}`
+      );
+
       return res.status(401).json({
         success: false,
         message: "Invalid username or password"
       });
     }
 
-    res.json({
+    console.log(
+      `LOGIN SUCCESS: ${user.username}`
+    );
+
+    return res.json({
       success: true,
       message: "Login successful",
       user: {
@@ -212,9 +350,9 @@ app.post("/api/login", async (req, res) => {
     });
 
   } catch (error) {
-    console.error(error);
+    console.error("LOGIN ERROR:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Server error"
     });
