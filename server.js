@@ -1,4 +1,3 @@
-ABDO SH:
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 
