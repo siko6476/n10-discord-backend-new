@@ -14,9 +14,21 @@ const app = express();
 
 const PORT = Number(process.env.PORT || 10000);
 
+/*
+  رابط الموقع الذي يرجع إليه Discord
+*/
 const FRONTEND_URL = String(
   process.env.FRONTEND_URL ||
     "https://siko6476.github.io/N10-SERVER-MENA"
+).replace(/\/+$/, "");
+
+/*
+  Origin الحقيقي لموقع GitHub Pages
+  مهم جدًا للـ CORS.
+*/
+const FRONTEND_ORIGIN = String(
+  process.env.FRONTEND_ORIGIN ||
+    "https://siko6476.github.io"
 ).replace(/\/+$/, "");
 
 const DISCORD_CLIENT_ID =
@@ -73,6 +85,10 @@ if (!FRONTEND_URL) {
   missing.push("FRONTEND_URL");
 }
 
+if (!FRONTEND_ORIGIN) {
+  missing.push("FRONTEND_ORIGIN");
+}
+
 if (!OAUTH_STATE_SECRET) {
   missing.push("OAUTH_STATE_SECRET");
 }
@@ -114,16 +130,44 @@ pool.on("error", (error) => {
 });
 
 /* =========================================================
-   MIDDLEWARE
+   CORS
 ========================================================= */
 
-app.disable("x-powered-by");
-
-app.set("trust proxy", 1);
+const allowedOrigins = new Set([
+  FRONTEND_ORIGIN,
+  "https://siko6476.github.io",
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:5173"
+]);
 
 app.use(
   cors({
-    origin: FRONTEND_URL,
+    origin: function (origin, callback) {
+
+      /*
+        Requests without Origin:
+        Render health checks, curl, etc.
+      */
+
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (allowedOrigins.has(origin)) {
+        return callback(null, true);
+      }
+
+      console.log(
+        "⚠️ CORS blocked:",
+        origin
+      );
+
+      return callback(
+        new Error("CORS not allowed")
+      );
+    },
 
     methods: [
       "GET",
@@ -137,9 +181,27 @@ app.use(
       "X-Admin-Key"
     ],
 
-    credentials: false
+    credentials: false,
+
+    optionsSuccessStatus: 204
   })
 );
+
+/*
+  Handle OPTIONS explicitly.
+*/
+app.options(
+  "*",
+  cors()
+);
+
+/* =========================================================
+   MIDDLEWARE
+========================================================= */
+
+app.disable("x-powered-by");
+
+app.set("trust proxy", 1);
 
 app.use(
   express.json({
@@ -213,9 +275,9 @@ function validAccessKey(key) {
   );
 }
 
-/*
-  ALWAYS creates a brand-new Access Key.
-*/
+/* =========================================================
+   ACCESS KEY
+========================================================= */
 
 function generateAccessKey() {
   return (
@@ -257,9 +319,8 @@ function noCache(res) {
    FRONTEND REDIRECT
 ========================================================= */
 
-function frontendRedirect(
-  params = {}
-) {
+function frontendRedirect(params = {}) {
+
   const url =
     new URL(
       FRONTEND_URL + "/"
@@ -269,10 +330,12 @@ function frontendRedirect(
     const [key, value]
       of Object.entries(params)
   ) {
+
     if (
       value !== undefined &&
       value !== null
     ) {
+
       url.searchParams.set(
         key,
         String(value)
@@ -288,6 +351,7 @@ function frontendRedirect(
 ========================================================= */
 
 function createOAuthState() {
+
   if (!OAUTH_STATE_SECRET) {
     throw new Error(
       "OAUTH_STATE_SECRET missing"
@@ -320,6 +384,7 @@ function createOAuthState() {
 }
 
 function verifyOAuthState(state) {
+
   if (
     typeof state !== "string" ||
     !state
@@ -412,21 +477,24 @@ function verifyOAuthState(state) {
 }
 
 /* =========================================================
-   CREATE BRAND NEW ACCESS KEY
+   CREATE ACCESS KEY
 ========================================================= */
 
 async function createAccessKey(
   discordId
 ) {
+
   for (
     let attempt = 0;
     attempt < 50;
     attempt++
   ) {
+
     const newKey =
       generateAccessKey();
 
     try {
+
       const result =
         await pool.query(
           `
@@ -470,11 +538,6 @@ async function createAccessKey(
 
     } catch (error) {
 
-      /*
-        Duplicate key:
-        generate another one.
-      */
-
       if (
         error.code === "23505"
       ) {
@@ -499,6 +562,7 @@ async function invalidateOldDiscordKeys(
   accountId,
   username
 ) {
+
   if (!discordId) {
     return;
   }
@@ -537,6 +601,7 @@ async function invalidateOldDiscordKeys(
 ========================================================= */
 
 async function initDatabase() {
+
   const client =
     await pool.connect();
 
@@ -808,7 +873,8 @@ app.get(
     res.json({
       success: true,
       name: "N10 SERVER MENA",
-      status: "online"
+      status: "online",
+      cors: FRONTEND_ORIGIN
     });
 
   }
@@ -831,7 +897,9 @@ app.get(
       res.json({
         success: true,
         status: "online",
-        database: "connected"
+        database: "connected",
+        frontend: FRONTEND_URL,
+        origin: FRONTEND_ORIGIN
       });
 
     } catch (error) {
@@ -876,10 +944,6 @@ app.get(
 
       const state =
         createOAuthState();
-
-      /*
-        identify + email
-      */
 
       const params =
         new URLSearchParams({
@@ -995,7 +1059,7 @@ app.get(
       }
 
       /* =====================================================
-         DISCORD TOKEN
+         TOKEN
       ===================================================== */
 
       const tokenResponse =
@@ -1132,13 +1196,8 @@ app.get(
         discordUsername
       );
 
-      /*
-        لا نطبع email
-        ولا Discord token
-      */
-
       /* =====================================================
-         FIND EXISTING ACCOUNT
+         EXISTING ACCOUNT
       ===================================================== */
 
       const existingAccount =
@@ -1156,10 +1215,6 @@ app.get(
           [discordId]
         );
 
-      /* =====================================================
-         EXISTING ACCOUNT
-      ===================================================== */
-
       if (
         existingAccount.rows.length > 0
       ) {
@@ -1167,33 +1222,16 @@ app.get(
         const account =
           existingAccount.rows[0];
 
-        /*
-          IMPORTANT:
-
-          Invalidate every previous unused
-          key belonging to this Discord account.
-        */
-
         await invalidateOldDiscordKeys(
           discordId,
           account.id,
           account.username
         );
 
-        /*
-          IMPORTANT:
-
-          Generate a COMPLETELY NEW key.
-        */
-
         const newKey =
           await createAccessKey(
             discordId
           );
-
-        /*
-          Save NEW key in account.
-        */
 
         await pool.query(
           `
@@ -1216,10 +1254,6 @@ app.get(
             account.id
           ]
         );
-
-        /* ===================================================
-           NEW SESSION
-        =================================================== */
 
         const sessionToken =
           generateSessionToken();
@@ -1259,17 +1293,9 @@ app.get(
           account.username
         );
 
-        console.log(
-          "🔑 NEW ACCESS KEY:",
-          newKey.key
-        );
-
-        /*
-          Send ONLY the new key.
-        */
-
         return res.redirect(
           frontendRedirect({
+
             success:
               "true",
 
@@ -1297,12 +1323,6 @@ app.get(
          NEW DISCORD ACCOUNT
       ===================================================== */
 
-      /*
-        No old key is searched.
-
-        A NEW key is created every time.
-      */
-
       const newKey =
         await createAccessKey(
           discordId
@@ -1312,18 +1332,9 @@ app.get(
         "🆕 New Discord user"
       );
 
-      console.log(
-        "🔑 NEW ACCESS KEY:",
-        newKey.key
-      );
-
-      /*
-        The account itself is created
-        later during /api/register.
-      */
-
       return res.redirect(
         frontendRedirect({
+
           success:
             "true",
 
@@ -1391,16 +1402,10 @@ app.post(
         accessKey ?? ""
       ).trim();
 
-    /* =====================================================
-       VALIDATION
-    ===================================================== */
-
     if (
       !cleanName ||
-      typeof password !==
-        "string" ||
-      typeof confirmPassword !==
-        "string" ||
+      typeof password !== "string" ||
+      typeof confirmPassword !== "string" ||
       !key
     ) {
 
@@ -1509,10 +1514,6 @@ app.post(
       const keyRow =
         keyResult.rows[0];
 
-      /* ===================================================
-         USED KEY
-      =================================================== */
-
       if (keyRow.used) {
 
         await client.query(
@@ -1542,8 +1543,7 @@ app.post(
         );
 
       if (
-        usernameResult.rows.length >
-        0
+        usernameResult.rows.length > 0
       ) {
 
         await client.query(
@@ -1568,7 +1568,7 @@ app.post(
         );
 
       /* ===================================================
-         CREATE ACCOUNT
+         ACCOUNT
       =================================================== */
 
       const accountResult =
@@ -1680,9 +1680,7 @@ app.post(
         account.username
       );
 
-      return res.status(
-        201
-      ).json({
+      return res.status(201).json({
 
         success: true,
 
@@ -1726,8 +1724,7 @@ app.post(
       );
 
       if (
-        error.code ===
-        "23505"
+        error.code === "23505"
       ) {
 
         return sendError(
@@ -1752,7 +1749,7 @@ app.post(
 );
 
 /* =========================================================
-   PASSWORD LOGIN
+   LOGIN
 ========================================================= */
 
 app.post(
@@ -1773,8 +1770,7 @@ app.post(
 
       if (
         !normalizedName ||
-        typeof password !==
-          "string"
+        typeof password !== "string"
       ) {
 
         return sendError(
@@ -1840,10 +1836,6 @@ app.post(
           "اسم المستخدم أو كلمة المرور غير صحيحة."
         );
       }
-
-      /* ===================================================
-         SESSION
-      =================================================== */
 
       const sessionToken =
         generateSessionToken();
@@ -2180,10 +2172,8 @@ app.get(
         ];
 
       if (
-        typeof providedKey !==
-          "string" ||
-        providedKey !==
-          ADMIN_KEY
+        typeof providedKey !== "string" ||
+        providedKey !== ADMIN_KEY
       ) {
 
         return sendError(
@@ -2240,7 +2230,7 @@ app.get(
 );
 
 /* =========================================================
-   SESSION CLEANUP
+   CLEANUP
 ========================================================= */
 
 async function cleanupSessions() {
@@ -2377,7 +2367,11 @@ async function startServer() {
           );
 
           console.log(
-            `🌐 Frontend: ${FRONTEND_URL}`
+            `🌐 Frontend URL: ${FRONTEND_URL}`
+          );
+
+          console.log(
+            `🌐 Frontend Origin: ${FRONTEND_ORIGIN}`
           );
 
           console.log(
@@ -2386,6 +2380,10 @@ async function startServer() {
 
           console.log(
             "🗄️ PostgreSQL: CONNECTED"
+          );
+
+          console.log(
+            "🔐 CORS: ENABLED"
           );
 
           console.log(
