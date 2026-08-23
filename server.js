@@ -1,5 +1,26 @@
 "use strict";
 
+/*
+========================================================
+ N10 SERVER MENA
+ Backend كامل
+========================================================
+
+- Discord OAuth2
+- OAuth State protection
+- PostgreSQL
+- Access Keys
+- Register
+- Login
+- Sessions 30 days
+- Password hashing
+- CORS
+- Health Check
+- Logout
+- Database migration
+========================================================
+*/
+
 const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
@@ -8,9 +29,11 @@ const { Pool } = require("pg");
 
 const app = express();
 
-/* =====================================================
-   SETTINGS
-===================================================== */
+/*
+========================================================
+ ENV
+========================================================
+*/
 
 const PORT = Number(process.env.PORT || 3000);
 
@@ -20,17 +43,17 @@ const FRONTEND_URL = (
 ).replace(/\/+$/, "");
 
 const DISCORD_CLIENT_ID =
-  process.env.DISCORD_CLIENT_ID;
+  process.env.DISCORD_CLIENT_ID || "";
 
 const DISCORD_CLIENT_SECRET =
-  process.env.DISCORD_CLIENT_SECRET;
+  process.env.DISCORD_CLIENT_SECRET || "";
 
 const DISCORD_REDIRECT_URI =
   process.env.DISCORD_REDIRECT_URI ||
   "https://n10-discord-backend-new.onrender.com/auth/discord/callback";
 
 const DATABASE_URL =
-  process.env.DATABASE_URL;
+  process.env.DATABASE_URL || "";
 
 const OAUTH_STATE_SECRET =
   process.env.OAUTH_STATE_SECRET ||
@@ -38,29 +61,42 @@ const OAUTH_STATE_SECRET =
 
 const SESSION_DAYS = 30;
 
-/* =====================================================
-   CHECK ENV
-===================================================== */
+/*
+========================================================
+ ENV CHECK
+========================================================
+*/
+
+const missingEnv = [];
 
 if (!DATABASE_URL) {
-  console.error("❌ DATABASE_URL missing");
+  missingEnv.push("DATABASE_URL");
 }
 
 if (!DISCORD_CLIENT_ID) {
-  console.error("❌ DISCORD_CLIENT_ID missing");
+  missingEnv.push("DISCORD_CLIENT_ID");
 }
 
 if (!DISCORD_CLIENT_SECRET) {
-  console.error("❌ DISCORD_CLIENT_SECRET missing");
+  missingEnv.push("DISCORD_CLIENT_SECRET");
 }
 
 if (!OAUTH_STATE_SECRET) {
-  console.error("❌ OAUTH_STATE_SECRET missing");
+  missingEnv.push("OAUTH_STATE_SECRET");
 }
 
-/* =====================================================
-   DATABASE
-===================================================== */
+if (missingEnv.length > 0) {
+  console.error(
+    "❌ Missing environment variables:",
+    missingEnv.join(", ")
+  );
+}
+
+/*
+========================================================
+ POSTGRESQL
+========================================================
+*/
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
@@ -79,18 +115,19 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000
 });
 
-pool.on("error", (error) => {
-  console.error(
-    "❌ PostgreSQL pool error:",
-    error
-  );
-});
-
-/* =====================================================
-   MIDDLEWARE
-===================================================== */
+/*
+========================================================
+ EXPRESS
+========================================================
+*/
 
 app.disable("x-powered-by");
+
+/*
+========================================================
+ CORS
+========================================================
+*/
 
 app.use(
   cors({
@@ -103,9 +140,16 @@ app.use(
     allowedHeaders: [
       "Content-Type",
       "Authorization"
-    ]
+    ],
+    credentials: false
   })
 );
+
+/*
+========================================================
+ BODY
+========================================================
+*/
 
 app.use(
   express.json({
@@ -120,11 +164,13 @@ app.use(
   })
 );
 
-/* =====================================================
-   HELPERS
-===================================================== */
+/*
+========================================================
+ HELPERS
+========================================================
+*/
 
-function errorResponse(
+function sendError(
   res,
   status,
   message
@@ -135,13 +181,18 @@ function errorResponse(
   });
 }
 
+/*
+========================================================
+ USERNAME
+========================================================
+*/
+
 function cleanUsername(username) {
-  return String(username ?? "").trim();
+  return String(username || "").trim();
 }
 
 function normalizeUsername(username) {
-  return cleanUsername(username)
-    .toLowerCase();
+  return cleanUsername(username).toLowerCase();
 }
 
 function validUsername(username) {
@@ -150,24 +201,28 @@ function validUsername(username) {
   );
 }
 
+/*
+========================================================
+ PASSWORD
+========================================================
+*/
+
 function validPassword(password) {
-  if (
-    typeof password !== "string"
-  ) {
+  if (typeof password !== "string") {
     return false;
   }
 
-  const size =
-    Buffer.byteLength(
-      password,
-      "utf8"
-    );
+  const bytes =
+    Buffer.byteLength(password, "utf8");
 
-  return (
-    size >= 6 &&
-    size <= 72
-  );
+  return bytes >= 6 && bytes <= 72;
 }
+
+/*
+========================================================
+ ACCESS KEY
+========================================================
+*/
 
 function validAccessKey(key) {
   return (
@@ -175,10 +230,6 @@ function validAccessKey(key) {
     /^N10-[A-Za-z0-9]+$/.test(key)
   );
 }
-
-/* =====================================================
-   ACCESS KEY
-===================================================== */
 
 function generateAccessKey() {
   return (
@@ -189,9 +240,11 @@ function generateAccessKey() {
   );
 }
 
-/* =====================================================
-   SESSION
-===================================================== */
+/*
+========================================================
+ SESSION
+========================================================
+*/
 
 function generateSessionToken() {
   return crypto
@@ -199,142 +252,169 @@ function generateSessionToken() {
     .toString("hex");
 }
 
-/* =====================================================
-   OAUTH STATE
-===================================================== */
+/*
+========================================================
+ OAUTH STATE
+========================================================
 
-function createOAuthState() {
-  const timestamp =
-    Date.now().toString();
+State مربوط بالمتصفح عن طريق Cookie.
+هذا أفضل من State عشوائي وحده.
+========================================================
+*/
 
-  const random =
-    crypto
-      .randomBytes(32)
-      .toString("hex");
-
-  const data =
-    `${timestamp}.${random}`;
-
-  const signature =
-    crypto
-      .createHmac(
-        "sha256",
-        OAUTH_STATE_SECRET
-      )
-      .update(data)
-      .digest("hex");
-
-  return (
-    `${data}.${signature}`
-  );
+function generateOAuthState() {
+  return crypto
+    .randomBytes(32)
+    .toString("hex");
 }
 
-function verifyOAuthState(state) {
+function signOAuthState(state) {
+  return crypto
+    .createHmac(
+      "sha256",
+      OAUTH_STATE_SECRET
+    )
+    .update(state)
+    .digest("hex");
+}
+
+function createOAuthState() {
+  const state =
+    generateOAuthState();
+
+  const signature =
+    signOAuthState(state);
+
+  return {
+    state,
+    value:
+      `${state}.${signature}`
+  };
+}
+
+function verifyOAuthState(value) {
   if (
-    typeof state !== "string" ||
-    !state
+    !value ||
+    typeof value !== "string"
   ) {
     return false;
   }
 
   const parts =
-    state.split(".");
+    value.split(".");
 
-  if (parts.length !== 3) {
+  if (parts.length !== 2) {
     return false;
   }
 
   const [
-    timestamp,
-    random,
+    state,
     signature
   ] = parts;
 
-  if (
-    !timestamp ||
-    !random ||
-    !signature
-  ) {
+  if (!state || !signature) {
     return false;
   }
-
-  if (
-    !/^[a-f0-9]{64}$/.test(
-      signature
-    )
-  ) {
-    return false;
-  }
-
-  const data =
-    `${timestamp}.${random}`;
 
   const expected =
-    crypto
-      .createHmac(
-        "sha256",
-        OAUTH_STATE_SECRET
-      )
-      .update(data)
-      .digest("hex");
+    signOAuthState(state);
 
-  const a =
-    Buffer.from(
-      signature,
-      "hex"
+  if (
+    signature.length !==
+    expected.length
+  ) {
+    return false;
+  }
+
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expected)
     );
-
-  const b =
-    Buffer.from(
-      expected,
-      "hex"
-    );
-
-  if (
-    a.length !== b.length
-  ) {
+  } catch {
     return false;
   }
+}
 
-  if (
-    !crypto.timingSafeEqual(
-      a,
-      b
-    )
-  ) {
-    return false;
-  }
+/*
+========================================================
+ COOKIE HELPERS
+========================================================
+*/
 
-  const created =
-    Number(timestamp);
+function setOAuthCookie(res, state) {
+  const isProduction =
+    process.env.NODE_ENV === "production";
 
-  if (
-    !Number.isFinite(created)
-  ) {
-    return false;
-  }
+  const cookie =
+    [
+      `n10_oauth_state=${encodeURIComponent(state)}`,
+      "HttpOnly",
+      "Path=/auth/discord",
+      "SameSite=Lax",
+      isProduction ? "Secure" : ""
+    ]
+      .filter(Boolean)
+      .join("; ");
 
-  const age =
-    Date.now() - created;
-
-  return (
-    age >= 0 &&
-    age <=
-      10 * 60 * 1000
+  res.setHeader(
+    "Set-Cookie",
+    cookie
   );
 }
 
-/* =====================================================
-   FRONTEND REDIRECT
-===================================================== */
+function clearOAuthCookie(res) {
+  const isProduction =
+    process.env.NODE_ENV === "production";
 
-function redirectToFrontend(
-  params = {}
-) {
+  const cookie =
+    [
+      "n10_oauth_state=",
+      "HttpOnly",
+      "Path=/auth/discord",
+      "SameSite=Lax",
+      "Max-Age=0",
+      isProduction ? "Secure" : ""
+    ]
+      .filter(Boolean)
+      .join("; ");
+
+  res.setHeader(
+    "Set-Cookie",
+    cookie
+  );
+}
+
+function getCookie(req, name) {
+  const header =
+    req.headers.cookie || "";
+
+  const parts =
+    header.split(";");
+
+  for (const part of parts) {
+    const [key, ...rest] =
+      part.trim().split("=");
+
+    if (key === name) {
+      return decodeURIComponent(
+        rest.join("=")
+      );
+    }
+  }
+
+  return null;
+}
+
+/*
+========================================================
+ FRONTEND REDIRECT
+========================================================
+*/
+
+function frontendRedirect(params = {}) {
   const url =
-    new URL(
-      FRONTEND_URL
-    );
+    new URL(FRONTEND_URL);
 
   for (
     const [key, value]
@@ -354,35 +434,41 @@ function redirectToFrontend(
   return url.toString();
 }
 
-/* =====================================================
-   DATABASE INIT
-===================================================== */
+/*
+========================================================
+ DATABASE INITIALIZATION
+========================================================
+*/
 
 async function initDatabase() {
+  if (!DATABASE_URL) {
+    throw new Error(
+      "DATABASE_URL غير موجود."
+    );
+  }
+
   const client =
     await pool.connect();
 
   try {
-    await client.query(
-      "BEGIN"
-    );
+    await client.query("BEGIN");
 
     /*
+    ====================================================
     USERS
+    ====================================================
     */
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
 
-        username VARCHAR(24)
-          NOT NULL,
+        username VARCHAR(24) NOT NULL,
 
         username_normalized VARCHAR(24)
           UNIQUE NOT NULL,
 
-        password_hash TEXT
-          NOT NULL,
+        password_hash TEXT NOT NULL,
 
         access_key TEXT
           UNIQUE NOT NULL,
@@ -396,7 +482,9 @@ async function initDatabase() {
     `);
 
     /*
+    ====================================================
     ACCESS KEYS
+    ====================================================
     */
 
     await client.query(`
@@ -421,7 +509,9 @@ async function initDatabase() {
     `);
 
     /*
+    ====================================================
     SESSIONS
+    ====================================================
     */
 
     await client.query(`
@@ -435,34 +525,38 @@ async function initDatabase() {
           NOT NULL,
 
         created_at TIMESTAMP
-          DEFAULT CURRENT_TIMESTAMP
+          DEFAULT CURRENT_TIMESTAMP,
+
+        expires_at TIMESTAMP
       )
     `);
 
     /*
-    إضافة expires_at إذا الجدول قديم
+    ====================================================
+    MIGRATION
+    ====================================================
     */
 
     await client.query(`
       ALTER TABLE sessions
-      ADD COLUMN IF NOT EXISTS
-      expires_at TIMESTAMP
+      ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP
     `);
-
-    /*
-    الجلسات القديمة
-    */
 
     await client.query(`
       UPDATE sessions
       SET expires_at =
-        created_at +
-        INTERVAL '30 days'
+        COALESCE(
+          expires_at,
+          created_at +
+          INTERVAL '30 days'
+        )
       WHERE expires_at IS NULL
     `);
 
     /*
+    ====================================================
     INDEXES
+    ====================================================
     */
 
     await client.query(`
@@ -479,24 +573,20 @@ async function initDatabase() {
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS
-      idx_sessions_expiry
+      idx_sessions_expires
       ON sessions(expires_at)
     `);
 
-    await client.query(
-      "COMMIT"
-    );
+    await client.query("COMMIT");
 
     console.log(
-      "✅ Database ready"
+      "✅ PostgreSQL database جاهزة."
     );
   } catch (error) {
-    await client.query(
-      "ROLLBACK"
-    );
+    await client.query("ROLLBACK");
 
     console.error(
-      "❌ Database error:",
+      "❌ Database initialization error:",
       error
     );
 
@@ -506,24 +596,26 @@ async function initDatabase() {
   }
 }
 
-/* =====================================================
-   HOME
-===================================================== */
+/*
+========================================================
+ HOME
+========================================================
+*/
 
-app.get(
-  "/",
-  (req, res) => {
-    res.json({
-      success: true,
-      name: "N10 SERVER MENA",
-      status: "online"
-    });
-  }
-);
+app.get("/", (req, res) => {
+  res.json({
+    success: true,
+    name: "N10 SERVER MENA",
+    status: "online",
+    time: new Date().toISOString()
+  });
+});
 
-/* =====================================================
-   HEALTH
-===================================================== */
+/*
+========================================================
+ HEALTH
+========================================================
+*/
 
 app.get(
   "/health",
@@ -533,18 +625,18 @@ app.get(
         "SELECT 1"
       );
 
-      res.json({
+      return res.json({
         success: true,
         status: "online",
         database: "connected"
       });
     } catch (error) {
       console.error(
-        "Health error:",
+        "❌ Health error:",
         error
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         success: false,
         status: "online",
         database: "error"
@@ -553,9 +645,11 @@ app.get(
   }
 );
 
-/* =====================================================
-   DISCORD LOGIN
-===================================================== */
+/*
+========================================================
+ DISCORD AUTH
+========================================================
+*/
 
 app.get(
   "/auth/discord",
@@ -566,15 +660,28 @@ app.get(
         !DISCORD_CLIENT_SECRET ||
         !OAUTH_STATE_SECRET
       ) {
-        return errorResponse(
+        return sendError(
           res,
           500,
-          "Discord environment variables ناقصة."
+          "إعدادات Discord ناقصة في Render."
         );
       }
 
-      const state =
+      const oauth =
         createOAuthState();
+
+      /*
+      نخزن State في Cookie
+      */
+
+      setOAuthCookie(
+        res,
+        oauth.value
+      );
+
+      /*
+      Discord OAuth URL
+      */
 
       const params =
         new URLSearchParams({
@@ -590,34 +697,37 @@ app.get(
           scope:
             "identify",
 
-          state
+          state:
+            oauth.value
         });
 
-      const url =
+      const discordURL =
         "https://discord.com/oauth2/authorize?" +
         params.toString();
 
       return res.redirect(
-        url
+        discordURL
       );
     } catch (error) {
       console.error(
-        "Discord start error:",
+        "❌ Discord auth error:",
         error
       );
 
-      return errorResponse(
+      return sendError(
         res,
         500,
-        "تعذر تشغيل Discord Login."
+        "تعذر بدء تسجيل الدخول عبر Discord."
       );
     }
   }
 );
 
-/* =====================================================
-   DISCORD CALLBACK
-===================================================== */
+/*
+========================================================
+ DISCORD CALLBACK
+========================================================
+*/
 
 app.get(
   "/auth/discord/callback",
@@ -628,39 +738,56 @@ app.get(
           req.query.code || ""
         );
 
-      const state =
+      const returnedState =
         String(
           req.query.state || ""
         );
 
+      const savedState =
+        getCookie(
+          req,
+          "n10_oauth_state"
+        );
+
       /*
+      ==================================================
       تحقق State
+      ==================================================
       */
 
       if (
+        !returnedState ||
+        !savedState ||
+        returnedState !== savedState ||
         !verifyOAuthState(
-          state
+          returnedState
         )
       ) {
         console.error(
-          "❌ OAuth state invalid"
+          "❌ OAuth State mismatch."
         );
 
+        clearOAuthCookie(res);
+
         return res.redirect(
-          redirectToFrontend({
+          frontendRedirect({
             error:
               "invalid_oauth_state"
           })
         );
       }
 
+      clearOAuthCookie(res);
+
       /*
+      ==================================================
       Discord cancel
+      ==================================================
       */
 
       if (!code) {
         return res.redirect(
-          redirectToFrontend({
+          frontendRedirect({
             error:
               "discord_cancelled"
           })
@@ -668,7 +795,9 @@ app.get(
       }
 
       /*
+      ==================================================
       TOKEN
+      ==================================================
       */
 
       const tokenResponse =
@@ -709,12 +838,12 @@ app.get(
         !tokenData.access_token
       ) {
         console.error(
-          "Discord token error:",
+          "❌ Discord token error:",
           tokenData
         );
 
         return res.redirect(
-          redirectToFrontend({
+          frontendRedirect({
             error:
               "discord_token_error"
           })
@@ -722,13 +851,17 @@ app.get(
       }
 
       /*
-      USER
+      ==================================================
+      DISCORD USER
+      ==================================================
       */
 
-      const discordResponse =
+      const userResponse =
         await fetch(
           "https://discord.com/api/v10/users/@me",
           {
+            method: "GET",
+
             headers: {
               Authorization:
                 `Bearer ${tokenData.access_token}`
@@ -737,19 +870,19 @@ app.get(
         );
 
       const discordUser =
-        await discordResponse.json();
+        await userResponse.json();
 
       if (
-        !discordResponse.ok ||
+        !userResponse.ok ||
         !discordUser.id
       ) {
         console.error(
-          "Discord user error:",
+          "❌ Discord user error:",
           discordUser
         );
 
         return res.redirect(
-          redirectToFrontend({
+          frontendRedirect({
             error:
               "discord_user_error"
           })
@@ -761,8 +894,15 @@ app.get(
           discordUser.id
         );
 
+      console.log(
+        "✅ Discord user:",
+        discordId
+      );
+
       /*
-      هل عنده حساب N10؟
+      ==================================================
+      EXISTING USER
+      ==================================================
       */
 
       const existingUser =
@@ -780,30 +920,31 @@ app.get(
         );
 
       if (
-        existingUser.rows.length
+        existingUser.rows.length > 0
       ) {
         const user =
           existingUser.rows[0];
 
-        /*
-        مهم:
-        نرجع accessKey للواجهة
-        */
+        console.log(
+          "✅ Existing N10 user:",
+          user.username
+        );
 
         return res.redirect(
-          redirectToFrontend({
+          frontendRedirect({
             accessKey:
-              user.access_key,
-
-            discord:
-              "existing"
+              user.access_key
           })
         );
       }
 
       /*
-      هل عنده مفتاح سابق؟
+      ==================================================
+      CHECK OLD UNUSED KEY
+      ==================================================
       */
+
+      let accessKey = null;
 
       const oldKey =
         await pool.query(
@@ -819,13 +960,21 @@ app.get(
           [discordId]
         );
 
-      let accessKey =
-        oldKey.rows.length
-          ? oldKey.rows[0].access_key
-          : null;
+      if (
+        oldKey.rows.length > 0
+      ) {
+        accessKey =
+          oldKey.rows[0].access_key;
+
+        console.log(
+          "✅ Existing unused Access Key found."
+        );
+      }
 
       /*
-      إنشاء مفتاح جديد
+      ==================================================
+      CREATE NEW KEY
+      ==================================================
       */
 
       if (!accessKey) {
@@ -858,11 +1007,14 @@ app.get(
             accessKey =
               candidate;
 
+            console.log(
+              "✅ New Access Key created."
+            );
+
             break;
           } catch (error) {
             if (
-              error.code ===
-              "23505"
+              error.code === "23505"
             ) {
               continue;
             }
@@ -872,9 +1024,19 @@ app.get(
         }
       }
 
+      /*
+      ==================================================
+      FINAL CHECK
+      ==================================================
+      */
+
       if (!accessKey) {
+        console.error(
+          "❌ Access Key generation failed."
+        );
+
         return res.redirect(
-          redirectToFrontend({
+          frontendRedirect({
             error:
               "key_generation_failed"
           })
@@ -882,15 +1044,19 @@ app.get(
       }
 
       /*
-      أهم سطر:
-      نرسل المفتاح للـ Frontend
+      ==================================================
+      REDIRECT FRONTEND
+      ==================================================
       */
 
+      console.log(
+        "➡️ Redirecting to:",
+        FRONTEND_URL
+      );
+
       return res.redirect(
-        redirectToFrontend({
-          accessKey,
-          discord:
-            "new"
+        frontendRedirect({
+          accessKey
         })
       );
     } catch (error) {
@@ -900,7 +1066,7 @@ app.get(
       );
 
       return res.redirect(
-        redirectToFrontend({
+        frontendRedirect({
           error:
             "discord_error"
         })
@@ -909,9 +1075,11 @@ app.get(
   }
 );
 
-/* =====================================================
-   REGISTER
-===================================================== */
+/*
+========================================================
+ REGISTER
+========================================================
+*/
 
 app.post(
   "/api/register",
@@ -921,30 +1089,32 @@ app.post(
       password,
       confirmPassword,
       accessKey
-    } = req.body || {};
+    } = req.body;
 
-    const name =
-      cleanUsername(
-        username
-      );
+    const cleanName =
+      cleanUsername(username);
 
-    const normalized =
-      normalizeUsername(
-        username
-      );
+    const normalizedName =
+      normalizeUsername(username);
 
     const key =
       String(
         accessKey || ""
       ).trim();
 
+    /*
+    ====================================================
+    VALIDATION
+    ====================================================
+    */
+
     if (
-      !name ||
+      !cleanName ||
       !password ||
       !confirmPassword ||
       !key
     ) {
-      return errorResponse(
+      return sendError(
         res,
         400,
         "الرجاء ملء جميع الخانات."
@@ -952,19 +1122,23 @@ app.post(
     }
 
     if (
-      !validUsername(name)
+      !validUsername(
+        cleanName
+      )
     ) {
-      return errorResponse(
+      return sendError(
         res,
         400,
-        "اسم المستخدم غير صالح."
+        "اسم المستخدم يجب أن يكون بين 3 و24 حرفاً."
       );
     }
 
     if (
-      !validPassword(password)
+      !validPassword(
+        password
+      )
     ) {
-      return errorResponse(
+      return sendError(
         res,
         400,
         "كلمة المرور يجب أن تكون بين 6 و72 بايت."
@@ -975,7 +1149,7 @@ app.post(
       password !==
       confirmPassword
     ) {
-      return errorResponse(
+      return sendError(
         res,
         400,
         "كلمتا المرور غير متطابقتين."
@@ -985,7 +1159,7 @@ app.post(
     if (
       !validAccessKey(key)
     ) {
-      return errorResponse(
+      return sendError(
         res,
         400,
         "Access Key غير صالح."
@@ -1001,7 +1175,40 @@ app.post(
       );
 
       /*
-      قفل المفتاح
+      ==================================================
+      USERNAME
+      ==================================================
+      */
+
+      const usernameExists =
+        await client.query(
+          `
+          SELECT id
+          FROM users
+          WHERE username_normalized = $1
+          LIMIT 1
+          `,
+          [normalizedName]
+        );
+
+      if (
+        usernameExists.rows.length > 0
+      ) {
+        await client.query(
+          "ROLLBACK"
+        );
+
+        return sendError(
+          res,
+          409,
+          "اسم المستخدم مستعمل من قبل."
+        );
+      }
+
+      /*
+      ==================================================
+      ACCESS KEY
+      ==================================================
       */
 
       const keyResult =
@@ -1020,13 +1227,13 @@ app.post(
         );
 
       if (
-        !keyResult.rows.length
+        keyResult.rows.length === 0
       ) {
         await client.query(
           "ROLLBACK"
         );
 
-        return errorResponse(
+        return sendError(
           res,
           400,
           "Access Key غير موجود."
@@ -1036,14 +1243,20 @@ app.post(
       const keyRow =
         keyResult.rows[0];
 
+      /*
+      ==================================================
+      KEY ALREADY USED
+      ==================================================
+      */
+
       if (
-        keyRow.used
+        keyRow.used === true
       ) {
         await client.query(
           "ROLLBACK"
         );
 
-        return errorResponse(
+        return sendError(
           res,
           400,
           "Access Key مستعمل من قبل."
@@ -1051,36 +1264,9 @@ app.post(
       }
 
       /*
-      تحقق username
-      */
-
-      const usernameExists =
-        await client.query(
-          `
-          SELECT id
-          FROM users
-          WHERE username_normalized = $1
-          LIMIT 1
-          `,
-          [normalized]
-        );
-
-      if (
-        usernameExists.rows.length
-      ) {
-        await client.query(
-          "ROLLBACK"
-        );
-
-        return errorResponse(
-          res,
-          409,
-          "اسم المستخدم مستعمل من قبل."
-        );
-      }
-
-      /*
-      password hash
+      ==================================================
+      PASSWORD HASH
+      ==================================================
       */
 
       const passwordHash =
@@ -1090,7 +1276,9 @@ app.post(
         );
 
       /*
-      إنشاء المستخدم
+      ==================================================
+      CREATE USER
+      ==================================================
       */
 
       const userResult =
@@ -1114,8 +1302,8 @@ app.post(
             created_at
           `,
           [
-            name,
-            normalized,
+            cleanName,
+            normalizedName,
             passwordHash,
             keyRow.access_key,
             keyRow.discord_id
@@ -1126,8 +1314,9 @@ app.post(
         userResult.rows[0];
 
       /*
-      الآن فقط:
-      المفتاح يصبح USED
+      ==================================================
+      MARK KEY USED
+      ==================================================
       */
 
       await client.query(
@@ -1136,8 +1325,7 @@ app.post(
         SET
           used = TRUE,
           used_by = $1,
-          used_at =
-            CURRENT_TIMESTAMP
+          used_at = CURRENT_TIMESTAMP
         WHERE id = $2
         `,
         [
@@ -1150,6 +1338,11 @@ app.post(
         "COMMIT"
       );
 
+      console.log(
+        "✅ User registered:",
+        user.username
+      );
+
       return res.status(201).json({
         success: true,
 
@@ -1157,17 +1350,14 @@ app.post(
           "تم إنشاء الحساب بنجاح.",
 
         user: {
-          id:
-            user.id,
-
-          username:
-            user.username,
-
+          id: user.id,
+          username: user.username,
           accessKey:
             user.access_key,
-
           discordId:
-            user.discord_id
+            user.discord_id,
+          createdAt:
+            user.created_at
         }
       });
     } catch (error) {
@@ -1181,17 +1371,16 @@ app.post(
       );
 
       if (
-        error.code ===
-        "23505"
+        error.code === "23505"
       ) {
-        return errorResponse(
+        return sendError(
           res,
           409,
           "اسم المستخدم أو Access Key مستعمل من قبل."
         );
       }
 
-      return errorResponse(
+      return sendError(
         res,
         500,
         "حدث خطأ أثناء إنشاء الحساب."
@@ -1202,9 +1391,11 @@ app.post(
   }
 );
 
-/* =====================================================
-   LOGIN
-===================================================== */
+/*
+========================================================
+ LOGIN
+========================================================
+*/
 
 app.post(
   "/api/login",
@@ -1213,22 +1404,21 @@ app.post(
       const {
         username,
         password
-      } = req.body || {};
+      } = req.body;
 
-      const normalized =
+      const normalizedName =
         normalizeUsername(
           username
         );
 
       if (
-        !normalized ||
-        typeof password !==
-          "string"
+        !normalizedName ||
+        !password
       ) {
-        return errorResponse(
+        return sendError(
           res,
           400,
-          "أدخل اسم المستخدم وكلمة المرور."
+          "الرجاء إدخال اسم المستخدم وكلمة المرور."
         );
       }
 
@@ -1246,13 +1436,13 @@ app.post(
           WHERE username_normalized = $1
           LIMIT 1
           `,
-          [normalized]
+          [normalizedName]
         );
 
       if (
-        !result.rows.length
+        result.rows.length === 0
       ) {
-        return errorResponse(
+        return sendError(
           res,
           401,
           "اسم المستخدم أو كلمة المرور غير صحيحة."
@@ -1269,7 +1459,7 @@ app.post(
         );
 
       if (!passwordOK) {
-        return errorResponse(
+        return sendError(
           res,
           401,
           "اسم المستخدم أو كلمة المرور غير صحيحة."
@@ -1277,13 +1467,15 @@ app.post(
       }
 
       /*
-      Session
+      ==================================================
+      SESSION
+      ==================================================
       */
 
       const token =
         generateSessionToken();
 
-      const expires =
+      const expiresAt =
         new Date(
           Date.now() +
           SESSION_DAYS *
@@ -1307,7 +1499,7 @@ app.post(
         [
           token,
           user.id,
-          expires
+          expiresAt
         ]
       );
 
@@ -1323,18 +1515,13 @@ app.post(
           user.access_key,
 
         user: {
-          id:
-            user.id,
-
+          id: user.id,
           username:
             user.username,
-
           accessKey:
             user.access_key,
-
           discordId:
             user.discord_id,
-
           createdAt:
             user.created_at
         }
@@ -1345,7 +1532,7 @@ app.post(
         error
       );
 
-      return errorResponse(
+      return sendError(
         res,
         500,
         "حدث خطأ أثناء تسجيل الدخول."
@@ -1354,119 +1541,111 @@ app.post(
   }
 );
 
-/* =====================================================
-   AUTH USER
-===================================================== */
-
-async function getUserFromToken(
-  req
-) {
-  const auth =
-    req.headers.authorization ||
-    "";
-
-  if (
-    !auth.startsWith(
-      "Bearer "
-    )
-  ) {
-    return null;
-  }
-
-  const token =
-    auth
-      .substring(7)
-      .trim();
-
-  if (!token) {
-    return null;
-  }
-
-  const result =
-    await pool.query(
-      `
-      SELECT
-        u.id,
-        u.username,
-        u.access_key,
-        u.discord_id,
-        u.created_at
-      FROM sessions s
-      INNER JOIN users u
-        ON u.id = s.user_id
-      WHERE s.token = $1
-        AND s.expires_at >
-            CURRENT_TIMESTAMP
-      LIMIT 1
-      `,
-      [token]
-    );
-
-  if (
-    !result.rows.length
-  ) {
-    await pool.query(
-      `
-      DELETE FROM sessions
-      WHERE token = $1
-      `,
-      [token]
-    );
-
-    return null;
-  }
-
-  return result.rows[0];
-}
-
-/* =====================================================
-   GET USER
-===================================================== */
+/*
+========================================================
+ GET USER
+========================================================
+*/
 
 app.get(
   "/api/user",
   async (req, res) => {
     try {
-      const user =
-        await getUserFromToken(
-          req
+      const auth =
+        req.headers.authorization || "";
+
+      if (
+        !auth.startsWith(
+          "Bearer "
+        )
+      ) {
+        return sendError(
+          res,
+          401,
+          "غير مصرح."
+        );
+      }
+
+      const token =
+        auth
+          .substring(7)
+          .trim();
+
+      if (!token) {
+        return sendError(
+          res,
+          401,
+          "Session غير صالحة."
+        );
+      }
+
+      const result =
+        await pool.query(
+          `
+          SELECT
+            u.id,
+            u.username,
+            u.access_key,
+            u.discord_id,
+            u.created_at
+          FROM sessions s
+          JOIN users u
+            ON u.id = s.user_id
+          WHERE
+            s.token = $1
+            AND s.expires_at > CURRENT_TIMESTAMP
+          LIMIT 1
+          `,
+          [token]
         );
 
-      if (!user) {
-        return errorResponse(
+      if (
+        result.rows.length === 0
+      ) {
+        /*
+        حذف Session منتهية
+        */
+
+        await pool.query(
+          `
+          DELETE FROM sessions
+          WHERE token = $1
+          `,
+          [token]
+        );
+
+        return sendError(
           res,
           401,
           "Session منتهية أو غير صالحة."
         );
       }
 
+      const user =
+        result.rows[0];
+
       return res.json({
         success: true,
 
         user: {
-          id:
-            user.id,
-
+          id: user.id,
           username:
             user.username,
-
           accessKey:
             user.access_key,
-
           discordId:
             user.discord_id,
-
           createdAt:
             user.created_at
         }
       });
     } catch (error) {
       console.error(
-        "User error:",
+        "❌ Get user error:",
         error
       );
 
-      return errorResponse(
+      return sendError(
         res,
         500,
         "حدث خطأ في السيرفر."
@@ -1475,17 +1654,18 @@ app.get(
   }
 );
 
-/* =====================================================
-   LOGOUT
-===================================================== */
+/*
+========================================================
+ LOGOUT
+========================================================
+*/
 
 app.post(
   "/api/logout",
   async (req, res) => {
     try {
       const auth =
-        req.headers.authorization ||
-        "";
+        req.headers.authorization || "";
 
       if (
         auth.startsWith(
@@ -1515,11 +1695,11 @@ app.post(
       });
     } catch (error) {
       console.error(
-        "Logout error:",
+        "❌ Logout error:",
         error
       );
 
-      return errorResponse(
+      return sendError(
         res,
         500,
         "حدث خطأ أثناء تسجيل الخروج."
@@ -1528,39 +1708,68 @@ app.post(
   }
 );
 
-/* =====================================================
-   404
-===================================================== */
+/*
+========================================================
+ CLEAN EXPIRED SESSIONS
+========================================================
+*/
+
+async function cleanExpiredSessions() {
+  try {
+    const result =
+      await pool.query(
+        `
+        DELETE FROM sessions
+        WHERE expires_at <= CURRENT_TIMESTAMP
+        `
+      );
+
+    if (
+      result.rowCount > 0
+    ) {
+      console.log(
+        `🧹 Deleted ${result.rowCount} expired sessions.`
+      );
+    }
+  } catch (error) {
+    console.error(
+      "❌ Session cleanup error:",
+      error
+    );
+  }
+}
+
+/*
+========================================================
+ 404
+========================================================
+*/
 
 app.use(
   (req, res) => {
-    res.status(404).json({
+    return res.status(404).json({
       success: false,
       message:
         "المسار غير موجود.",
-      path:
-        req.path
+      path: req.path
     });
   }
 );
 
-/* =====================================================
-   ERROR HANDLER
-===================================================== */
+/*
+========================================================
+ GLOBAL ERROR
+========================================================
+*/
 
 app.use(
-  (
-    error,
-    req,
-    res,
-    next
-  ) => {
+  (error, req, res, next) => {
     console.error(
-      "❌ Server error:",
+      "❌ Unhandled error:",
       error
     );
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message:
         "حدث خطأ داخلي في السيرفر."
@@ -1568,109 +1777,91 @@ app.use(
   }
 );
 
-/* =====================================================
-   START
-===================================================== */
+/*
+========================================================
+ START SERVER
+========================================================
+*/
 
 async function startServer() {
   try {
+    if (
+      missingEnv.length > 0
+    ) {
+      throw new Error(
+        `Environment variables ناقصة: ${missingEnv.join(", ")}`
+      );
+    }
+
     await initDatabase();
 
-    const server =
-      app.listen(
-        PORT,
-        "0.0.0.0",
-        () => {
-          console.log(
-            "===================================="
-          );
-
-          console.log(
-            "🚀 N10 SERVER MENA ONLINE"
-          );
-
-          console.log(
-            `🌐 PORT: ${PORT}`
-          );
-
-          console.log(
-            `🔗 FRONTEND: ${FRONTEND_URL}`
-          );
-
-          console.log(
-            `🔗 DISCORD CALLBACK: ${DISCORD_REDIRECT_URI}`
-          );
-
-          console.log(
-            "===================================="
-          );
-        }
-      );
-
-    server.on(
-      "error",
-      (error) => {
-        console.error(
-          "❌ Listen error:",
-          error
-        );
-
-        process.exit(1);
-      }
-    );
-
-    /*
-    تنظيف Sessions القديمة
-    كل ساعة
-    */
+    await cleanExpiredSessions();
 
     setInterval(
-      async () => {
-        try {
-          await pool.query(
-            `
-            DELETE FROM sessions
-            WHERE expires_at <=
-                  CURRENT_TIMESTAMP
-            `
-          );
-        } catch (error) {
-          console.error(
-            "Session cleanup error:",
-            error
-          );
-        }
-      },
+      cleanExpiredSessions,
       60 * 60 * 1000
-    ).unref();
+    );
+
+    app.listen(
+      PORT,
+      "0.0.0.0",
+      () => {
+        console.log(
+          "========================================"
+        );
+
+        console.log(
+          "🚀 N10 SERVER MENA ONLINE"
+        );
+
+        console.log(
+          `🌐 Port: ${PORT}`
+        );
+
+        console.log(
+          `🌐 Frontend: ${FRONTEND_URL}`
+        );
+
+        console.log(
+          `🔗 Discord Callback: ${DISCORD_REDIRECT_URI}`
+        );
+
+        console.log(
+          "🗄️ PostgreSQL: CONNECTED"
+        );
+
+        console.log(
+          "🔐 OAuth State: ENABLED"
+        );
+
+        console.log(
+          "⏱️ Sessions: 30 DAYS"
+        );
+
+        console.log(
+          "========================================"
+        );
+      }
+    );
   } catch (error) {
     console.error(
-      "❌ Startup failed:",
-      error
+      "========================================"
+    );
+
+    console.error(
+      "❌ SERVER STARTUP FAILED"
+    );
+
+    console.error(
+      error.message
+    );
+
+    console.error(
+      "========================================"
     );
 
     process.exit(1);
   }
 }
-
-/* =====================================================
-   SHUTDOWN
-===================================================== */
-
-process.on(
-  "SIGTERM",
-  async () => {
-    await pool.end();
-    process.exit(0);
-  }
-);
-
-process.on(
-  "SIGINT",
-  async () => {
-    await pool.end();
-    process.exit(0);
-  }
-);
 
 startServer();
