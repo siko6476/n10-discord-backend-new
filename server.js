@@ -14,33 +14,34 @@ const PORT = Number(process.env.PORT) || 3000;
 // ==================================================
 
 const DISCORD_CLIENT_ID =
-  process.env.DISCORD_CLIENT_ID || "";
+  process.env.DISCORD_CLIENT_ID;
 
 const DISCORD_CLIENT_SECRET =
-  process.env.DISCORD_CLIENT_SECRET || "";
+  process.env.DISCORD_CLIENT_SECRET;
 
 const DISCORD_REDIRECT_URI =
-  process.env.DISCORD_REDIRECT_URI || "";
+  process.env.DISCORD_REDIRECT_URI;
 
 const FRONTEND_URL =
   process.env.FRONTEND_URL ||
   "https://siko6476.github.io/N10-SERVER-MENA/";
 
 const OAUTH_STATE_SECRET =
-  process.env.OAUTH_STATE_SECRET || "";
+  process.env.OAUTH_STATE_SECRET;
 
 const SESSION_SECRET =
   process.env.SESSION_SECRET ||
   OAUTH_STATE_SECRET;
 
 const ADMIN_KEY =
-  process.env.ADMIN_KEY || "";
+  process.env.ADMIN_KEY;
 
 const DATABASE_URL =
-  process.env.DATABASE_URL || "";
+  process.env.DATABASE_URL;
+
 
 // ==================================================
-// Environment Validation
+// Validate Environment
 // ==================================================
 
 if (!DATABASE_URL) {
@@ -67,6 +68,7 @@ if (!SESSION_SECRET) {
   process.exit(1);
 }
 
+
 // ==================================================
 // PostgreSQL
 // ==================================================
@@ -85,50 +87,6 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000
 });
 
-// ==================================================
-// Middleware
-// ==================================================
-
-app.use(
-  express.json({
-    limit: "1mb"
-  })
-);
-
-// ==================================================
-// CORS
-// ==================================================
-
-app.use((req, res, next) => {
-  res.setHeader(
-    "Access-Control-Allow-Origin",
-    "*"
-  );
-
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    [
-      "Origin",
-      "X-Requested-With",
-      "Content-Type",
-      "Accept",
-      "Authorization",
-      "X-Admin-Key",
-      "X-Session-Token"
-    ].join(", ")
-  );
-
-  res.setHeader(
-    "Access-Control-Allow-Methods",
-    "GET, POST, PUT, DELETE, OPTIONS"
-  );
-
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(204);
-  }
-
-  next();
-});
 
 // ==================================================
 // Database Initialization
@@ -138,6 +96,7 @@ async function initDatabase() {
   const client = await pool.connect();
 
   try {
+
     // ==================================================
     // Accounts
     // ==================================================
@@ -170,6 +129,7 @@ async function initDatabase() {
       );
     `);
 
+
     // ==================================================
     // Access Keys
     // ==================================================
@@ -195,6 +155,7 @@ async function initDatabase() {
       );
     `);
 
+
     // ==================================================
     // Compatibility
     // ==================================================
@@ -208,6 +169,7 @@ async function initDatabase() {
       ALTER TABLE access_keys
       ADD COLUMN IF NOT EXISTS discord_id TEXT;
     `);
+
 
     // ==================================================
     // Indexes
@@ -243,6 +205,7 @@ async function initDatabase() {
       ON access_keys(discord_id);
     `);
 
+
     console.log(
       "✅ PostgreSQL database ready"
     );
@@ -252,6 +215,71 @@ async function initDatabase() {
   }
 }
 
+
+// ==================================================
+// Middleware
+// ==================================================
+
+app.use(
+  express.json({
+    limit: "1mb"
+  })
+);
+
+
+// ==================================================
+// CORS
+// ==================================================
+
+app.use((req, res, next) => {
+
+  res.header(
+    "Access-Control-Allow-Origin",
+    "*"
+  );
+
+  res.header(
+    "Access-Control-Allow-Headers",
+    [
+      "Origin",
+      "X-Requested-With",
+      "Content-Type",
+      "Accept",
+      "Authorization",
+      "X-Admin-Key",
+      "X-Session-Token"
+    ].join(", ")
+  );
+
+  res.header(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, DELETE, OPTIONS"
+  );
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
+
+// ==================================================
+// Home
+// ==================================================
+
+app.get("/", (req, res) => {
+
+  return res.json({
+    success: true,
+    service: "N10 Discord Backend",
+    database: "PostgreSQL",
+    message: "Backend is running"
+  });
+
+});
+
+
 // ==================================================
 // Health
 // ==================================================
@@ -259,7 +287,9 @@ async function initDatabase() {
 app.get(
   "/health",
   async (req, res) => {
+
     try {
+
       await pool.query("SELECT 1");
 
       return res.json({
@@ -272,6 +302,7 @@ app.get(
       });
 
     } catch (error) {
+
       console.error(
         "Health Error:",
         error
@@ -283,32 +314,19 @@ app.get(
         status: "online",
         database: "disconnected"
       });
+
     }
+
   }
 );
 
-// ==================================================
-// Home
-// ==================================================
-
-app.get(
-  "/",
-  (req, res) => {
-    return res.json({
-      success: true,
-      service: "N10 Discord Backend",
-      database: "PostgreSQL",
-      message: "Backend is running",
-      version: "6.0.0"
-    });
-  }
-);
 
 // ==================================================
 // OAuth State
 // ==================================================
 
 function createOAuthState() {
+
   const timestamp =
     Date.now().toString();
 
@@ -332,12 +350,15 @@ function createOAuthState() {
   return `${payload}.${signature}`;
 }
 
+
 // ==================================================
 // Verify OAuth State
 // ==================================================
 
 function verifyOAuthState(state) {
+
   try {
+
     if (
       typeof state !== "string" ||
       !state
@@ -352,38 +373,14 @@ function verifyOAuthState(state) {
       return false;
     }
 
-    const timestamp =
-      parts[0];
-
-    const nonce =
-      parts[1];
-
-    const signature =
-      parts[2];
+    const timestamp = parts[0];
+    const nonce = parts[1];
+    const signature = parts[2];
 
     if (
       !timestamp ||
       !nonce ||
       !signature
-    ) {
-      return false;
-    }
-
-    const createdAt =
-      Number(timestamp);
-
-    if (
-      !Number.isFinite(createdAt)
-    ) {
-      return false;
-    }
-
-    const age =
-      Date.now() - createdAt;
-
-    if (
-      age < 0 ||
-      age > 10 * 60 * 1000
     ) {
       return false;
     }
@@ -400,39 +397,54 @@ function verifyOAuthState(state) {
         .update(payload)
         .digest("hex");
 
-    const receivedBuffer =
-      Buffer.from(signature, "utf8");
-
-    const expectedBuffer =
-      Buffer.from(expected, "utf8");
-
     if (
-      receivedBuffer.length !==
-      expectedBuffer.length
+      signature.length !==
+      expected.length
     ) {
       return false;
     }
 
-    return crypto.timingSafeEqual(
-      receivedBuffer,
-      expectedBuffer
+    if (
+      !crypto.timingSafeEqual(
+        Buffer.from(signature),
+        Buffer.from(expected)
+      )
+    ) {
+      return false;
+    }
+
+    const createdAt =
+      Number(timestamp);
+
+    if (
+      !Number.isFinite(createdAt)
+    ) {
+      return false;
+    }
+
+    const age =
+      Date.now() - createdAt;
+
+    return (
+      age >= 0 &&
+      age <= 10 * 60 * 1000
     );
 
-  } catch (error) {
-    console.error(
-      "OAuth State Verify Error:",
-      error
-    );
+  } catch {
 
     return false;
+
   }
+
 }
+
 
 // ==================================================
 // Cookies
 // ==================================================
 
 function parseCookies(req) {
+
   const cookies = {};
 
   const header =
@@ -445,6 +457,7 @@ function parseCookies(req) {
   header
     .split(";")
     .forEach((part) => {
+
       const index =
         part.indexOf("=");
 
@@ -463,54 +476,72 @@ function parseCookies(req) {
           .trim();
 
       try {
+
         cookies[name] =
           decodeURIComponent(value);
+
       } catch {
+
         cookies[name] =
           value;
+
       }
+
     });
 
   return cookies;
 }
 
+
 function setOAuthCookie(
   res,
   state
 ) {
+
   res.setHeader(
     "Set-Cookie",
+
     `n10_oauth_state=${encodeURIComponent(
       state
     )}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`
   );
+
 }
+
 
 function clearOAuthCookie(res) {
+
   res.setHeader(
     "Set-Cookie",
+
     "n10_oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0"
   );
+
 }
 
+
 // ==================================================
-// Access Key
+// Generate Access Key
 // ==================================================
 
 function generateAccessKey() {
+
   return (
     "N10-" +
     crypto
       .randomBytes(16)
       .toString("hex")
   );
+
 }
 
+
 // ==================================================
-// Session Token
+// Create Session Token
 // ==================================================
 
 function createSessionToken(accountId) {
+
   const expires =
     Date.now() +
     30 * 24 * 60 * 60 * 1000;
@@ -527,15 +558,21 @@ function createSessionToken(accountId) {
       .update(payload)
       .digest("hex");
 
-  return `${payload}.${signature}`;
+  return (
+    `${payload}.${signature}`
+  );
+
 }
+
 
 // ==================================================
 // Verify Session Token
 // ==================================================
 
 function verifySessionToken(token) {
+
   try {
+
     if (
       typeof token !== "string" ||
       !token
@@ -586,23 +623,17 @@ function verifySessionToken(token) {
         .update(payload)
         .digest("hex");
 
-    const receivedBuffer =
-      Buffer.from(signature, "utf8");
-
-    const expectedBuffer =
-      Buffer.from(expected, "utf8");
-
     if (
-      receivedBuffer.length !==
-      expectedBuffer.length
+      signature.length !==
+      expected.length
     ) {
       return null;
     }
 
     if (
       !crypto.timingSafeEqual(
-        receivedBuffer,
-        expectedBuffer
+        Buffer.from(signature),
+        Buffer.from(expected)
       )
     ) {
       return null;
@@ -613,15 +644,20 @@ function verifySessionToken(token) {
     };
 
   } catch {
+
     return null;
+
   }
+
 }
+
 
 // ==================================================
 // Get Session Token
 // ==================================================
 
 function getSessionToken(req) {
+
   const authorization =
     req.headers.authorization;
 
@@ -629,9 +665,11 @@ function getSessionToken(req) {
     typeof authorization === "string" &&
     authorization.startsWith("Bearer ")
   ) {
+
     return authorization
       .slice(7)
       .trim();
+
   }
 
   const headerToken =
@@ -640,11 +678,15 @@ function getSessionToken(req) {
   if (
     typeof headerToken === "string"
   ) {
+
     return headerToken.trim();
+
   }
 
   return "";
+
 }
+
 
 // ==================================================
 // Authentication Middleware
@@ -655,7 +697,9 @@ async function requireAuth(
   res,
   next
 ) {
+
   try {
+
     const token =
       getSessionToken(req);
 
@@ -663,11 +707,13 @@ async function requireAuth(
       verifySessionToken(token);
 
     if (!session) {
+
       return res.status(401).json({
         success: false,
         message:
           "Session غير صالحة أو منتهية"
       });
+
     }
 
     const result =
@@ -684,11 +730,13 @@ async function requireAuth(
     if (
       result.rows.length === 0
     ) {
+
       return res.status(401).json({
         success: false,
         message:
           "الحساب غير موجود"
       });
+
     }
 
     req.account =
@@ -697,6 +745,7 @@ async function requireAuth(
     return next();
 
   } catch (error) {
+
     console.error(
       "Auth Error:",
       error
@@ -707,17 +756,21 @@ async function requireAuth(
       message:
         "Unauthorized"
     });
+
   }
+
 }
 
+
 // ==================================================
-// Create Key For Account
+// Create Key For Existing Account
 // ==================================================
 
 async function createKeyForAccount(
   client,
   account
 ) {
+
   const key =
     generateAccessKey();
 
@@ -763,27 +816,81 @@ async function createKeyForAccount(
   );
 
   return key;
+
 }
 
+
 // ==================================================
-// Discord Login
+// Create Registration Key From Discord
+//
+// مهم:
+// هذا المفتاح يبقى used = FALSE
+// حتى يستعمله المستخدم في Register.
+// ==================================================
+
+async function createDiscordRegistrationKey(
+  client,
+  discordUser
+) {
+
+  const key =
+    generateAccessKey();
+
+  await client.query(
+    `
+    INSERT INTO access_keys (
+      key,
+      used,
+      used_by,
+      account_id,
+      discord_id,
+      created_at,
+      used_at
+    )
+    VALUES (
+      $1,
+      FALSE,
+      NULL,
+      NULL,
+      $2,
+      NOW(),
+      NULL
+    )
+    `,
+    [
+      key,
+      discordUser.id
+    ]
+  );
+
+  return key;
+
+}
+
+
+// ==================================================
+// Discord OAuth Start
 // ==================================================
 
 app.get(
   "/auth/discord",
   (req, res) => {
+
     if (
       !DISCORD_CLIENT_ID ||
       !DISCORD_CLIENT_SECRET ||
       !DISCORD_REDIRECT_URI ||
       !OAUTH_STATE_SECRET
     ) {
+
       return res.status(500).send(
-        "Discord OAuth غير مضبوط في Render. راجع Environment Variables."
+        "Discord OAuth غير مضبوط في Render."
       );
+
     }
 
     try {
+
       const state =
         createOAuthState();
 
@@ -814,6 +921,7 @@ app.get(
       );
 
     } catch (error) {
+
       console.error(
         "Discord Start Error:",
         error
@@ -822,18 +930,23 @@ app.get(
       return res.status(500).send(
         "تعذر بدء تسجيل الدخول عبر Discord."
       );
+
     }
+
   }
 );
 
+
 // ==================================================
-// Discord Callback
+// Discord OAuth Callback
 // ==================================================
 
 app.get(
   "/auth/discord/callback",
   async (req, res) => {
+
     try {
+
       const code =
         typeof req.query.code === "string"
           ? req.query.code
@@ -849,28 +962,55 @@ app.get(
           ? req.query.error
           : "";
 
+
       // ==================================================
-      // Cancel
+      // Discord Cancel
       // ==================================================
 
       if (discordError) {
+
         clearOAuthCookie(res);
 
-        return res.redirect(
-          `${FRONTEND_URL}?discordError=${encodeURIComponent(
-            "تم إلغاء تسجيل الدخول عبر Discord"
-          )}`
-        );
+        return res.status(400).send(`
+          <!DOCTYPE html>
+          <html lang="ar" dir="rtl">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport"
+              content="width=device-width,initial-scale=1">
+            <title>N10 SERVER MENA</title>
+          </head>
+          <body style="
+            background:#071525;
+            color:white;
+            font-family:Arial;
+            text-align:center;
+            padding:50px;
+          ">
+            <h2>❌ تم إلغاء تسجيل الدخول عبر Discord</h2>
+            <p>يمكنك العودة للموقع والمحاولة مرة أخرى.</p>
+          </body>
+          </html>
+        `);
+
       }
 
+
+      // ==================================================
+      // Code / State
+      // ==================================================
+
       if (!code || !state) {
+
         return res.status(400).send(
           "Discord لم يرسل Code أو State."
         );
+
       }
 
+
       // ==================================================
-      // Verify State
+      // Verify OAuth Cookie
       // ==================================================
 
       const cookies =
@@ -884,17 +1024,20 @@ app.get(
         savedState !== state ||
         !verifyOAuthState(state)
       ) {
+
         clearOAuthCookie(res);
 
         return res.status(400).send(
           "OAuth State غير صالح أو منتهي. أعد تسجيل الدخول."
         );
+
       }
 
       clearOAuthCookie(res);
 
+
       // ==================================================
-      // Exchange Code
+      // Discord Token
       // ==================================================
 
       const tokenBody =
@@ -907,6 +1050,7 @@ app.get(
           redirect_uri:
             DISCORD_REDIRECT_URI
         });
+
 
       const tokenResponse =
         await fetch(
@@ -933,13 +1077,16 @@ app.get(
           }
         );
 
+
       const tokenData =
         await tokenResponse.json();
+
 
       if (
         !tokenResponse.ok ||
         !tokenData.access_token
       ) {
+
         console.error(
           "Discord Token Error:",
           tokenData
@@ -948,10 +1095,12 @@ app.get(
         return res.status(502).send(
           "فشل الاتصال بـ Discord."
         );
+
       }
 
+
       // ==================================================
-      // Get Discord User
+      // Discord User
       // ==================================================
 
       const userResponse =
@@ -970,13 +1119,16 @@ app.get(
           }
         );
 
+
       const discordUser =
         await userResponse.json();
+
 
       if (
         !userResponse.ok ||
         !discordUser.id
       ) {
+
         console.error(
           "Discord User Error:",
           discordUser
@@ -985,22 +1137,24 @@ app.get(
         return res.status(502).send(
           "تعذر الحصول على معلومات حساب Discord."
         );
+
       }
 
+
       // ==================================================
-      // Database Transaction
+      // Database
       // ==================================================
 
       const client =
         await pool.connect();
 
       try {
-        await client.query(
-          "BEGIN"
-        );
+
+        await client.query("BEGIN");
+
 
         // ==================================================
-        // Existing Account
+        // Check Existing Discord Account
         // ==================================================
 
         const existing =
@@ -1016,13 +1170,20 @@ app.get(
             ]
           );
 
-        let account;
+
+        // ==================================================
+        // Existing Account
+        //
+        // لا ننشئ حساب ثاني.
+        // ==================================================
 
         if (
           existing.rows.length > 0
         ) {
-          account =
+
+          const account =
             existing.rows[0];
+
 
           await client.query(
             `
@@ -1048,215 +1209,106 @@ app.get(
             ]
           );
 
-          account.discord_username =
-            discordUser.username ||
-            null;
 
-          account.discord_global_name =
-            discordUser.global_name ||
-            null;
-
-          account.discord_avatar =
-            discordUser.avatar ||
-            null;
-
-        } else {
-
-          // ==================================================
-          // Generate Username
-          // ==================================================
-
-          const rawName =
-            (
-              discordUser.global_name ||
-              discordUser.username ||
-              `discord_${discordUser.id}`
-            )
-              .trim();
-
-          const cleanedName =
-            rawName
-              .replace(
-                /[^a-zA-Z0-9_-]/g,
-                "_"
-              )
-              .toLowerCase();
-
-          const baseUsername =
-            (
-              cleanedName ||
-              `discord_${discordUser.id}`
-            ).slice(0, 20);
-
-          let username =
-            baseUsername;
-
-          let counter = 1;
-
-          while (true) {
-            const check =
-              await client.query(
-                `
-                SELECT id
-                FROM accounts
-                WHERE LOWER(username) =
-                      LOWER($1)
-                LIMIT 1
-                `,
-                [username]
-              );
-
-            if (
-              check.rows.length === 0
-            ) {
-              break;
-            }
-
-            username =
-              `${baseUsername}_${counter}`
-                .slice(0, 24);
-
-            counter++;
-
-            if (counter > 10000) {
-              throw new Error(
-                "Unable to generate unique username"
-              );
-            }
-          }
-
-          // ==================================================
-          // Random Password
-          // ==================================================
-
-          const randomPassword =
-            crypto
-              .randomBytes(32)
-              .toString("hex");
-
-          const passwordHash =
-            await bcrypt.hash(
-              randomPassword,
-              12
+          const newKey =
+            await createKeyForAccount(
+              client,
+              account
             );
 
-          // ==================================================
-          // Create Account
-          // ==================================================
 
-          const accountResult =
-            await client.query(
-              `
-              INSERT INTO accounts (
-                username,
-                password,
-                discord_id,
-                discord_username,
-                discord_global_name,
-                discord_avatar,
-                auth_provider,
-                created_at,
-                last_login_at
-              )
-              VALUES (
-                $1,
-                $2,
-                $3,
-                $4,
-                $5,
-                $6,
-                'discord',
-                NOW(),
-                NOW()
-              )
-              RETURNING *
-              `,
-              [
-                username,
-
-                passwordHash,
-
-                discordUser.id,
-
-                discordUser.username ||
-                  null,
-
-                discordUser.global_name ||
-                  null,
-
-                discordUser.avatar ||
-                  null
-              ]
+          const sessionToken =
+            createSessionToken(
+              account.id
             );
 
-          account =
-            accountResult.rows[0];
+
+          await client.query("COMMIT");
+
+
+          console.log(
+            "♻️ Existing Discord account login:",
+            account.username
+          );
+
+
+          return res.redirect(
+            `${FRONTEND_URL}?accessKey=${encodeURIComponent(
+              newKey
+            )}&username=${encodeURIComponent(
+              account.username
+            )}&sessionToken=${encodeURIComponent(
+              sessionToken
+            )}&login=success`
+          );
+
         }
 
+
         // ==================================================
-        // Generate New Access Key
+        // New Discord User
+        //
+        // هنا فقط ننشئ Registration Access Key.
+        //
+        // مهم جداً:
+        // used = FALSE
         // ==================================================
 
-        const newKey =
-          await createKeyForAccount(
+        const registrationKey =
+          await createDiscordRegistrationKey(
             client,
-            account
+            discordUser
           );
 
-        // ==================================================
-        // Session
-        // ==================================================
 
-        const sessionToken =
-          createSessionToken(
-            account.id
-          );
+        await client.query("COMMIT");
 
-        await client.query(
-          "COMMIT"
-        );
 
         console.log(
-          "🔑 Discord login:",
-          account.username
+          "🔑 Discord registration key created for:",
+          discordUser.username
         );
 
+
         // ==================================================
-        // Redirect
+        // Redirect To Register
         // ==================================================
 
         const redirectURL =
           `${FRONTEND_URL}?accessKey=${encodeURIComponent(
-            newKey
-          )}&username=${encodeURIComponent(
-            account.username
-          )}&sessionToken=${encodeURIComponent(
-            sessionToken
-          )}&login=success`;
+            registrationKey
+          )}&login=discord-register`;
+
 
         return res.redirect(
           redirectURL
         );
 
+
       } catch (error) {
-        await client.query(
-          "ROLLBACK"
-        );
+
+        try {
+          await client.query("ROLLBACK");
+        } catch {}
 
         console.error(
-          "Discord Transaction Error:",
+          "Discord Database Error:",
           error
         );
 
         return res.status(500).send(
-          "تعذر حفظ حساب Discord أو إنشاء المفتاح."
+          "تعذر حفظ معلومات Discord."
         );
 
       } finally {
+
         client.release();
+
       }
 
+
     } catch (error) {
+
       console.error(
         "Discord OAuth Error:",
         error
@@ -1265,9 +1317,12 @@ app.get(
       return res.status(500).send(
         "حدث خطأ داخلي أثناء تسجيل الدخول عبر Discord."
       );
+
     }
+
   }
 );
+
 
 // ==================================================
 // Admin Create Registration Key
@@ -1277,52 +1332,68 @@ async function createAccessKey(
   req,
   res
 ) {
+
   try {
+
     const provided =
       typeof req.body?.adminKey === "string"
         ? req.body.adminKey.trim()
         : "";
+
 
     if (
       !ADMIN_KEY ||
       !provided ||
       provided !== ADMIN_KEY
     ) {
+
       return res.status(401).json({
         success: false,
         message:
           "Unauthorized"
       });
+
     }
+
 
     const key =
       generateAccessKey();
+
 
     const result =
       await pool.query(
         `
         INSERT INTO access_keys (
           key,
-          used
+          used,
+          created_at
         )
         VALUES (
           $1,
-          FALSE
+          FALSE,
+          NOW()
         )
-        RETURNING key, used
+        RETURNING *
         `,
         [key]
       );
 
+
     return res.status(201).json({
+
       success: true,
+
       accessKey:
         result.rows[0].key,
+
       used:
-        result.rows[0].used
+        false
+
     });
 
+
   } catch (error) {
+
     console.error(
       "Create Key Error:",
       error
@@ -1333,8 +1404,11 @@ async function createAccessKey(
       message:
         "Internal server error"
     });
+
   }
+
 }
+
 
 app.post(
   "/admin/create-key",
@@ -1346,6 +1420,7 @@ app.post(
   createAccessKey
 );
 
+
 // ==================================================
 // Register
 // ==================================================
@@ -1354,24 +1429,35 @@ async function register(
   req,
   res
 ) {
+
   const client =
     await pool.connect();
 
   try {
+
     const username =
       typeof req.body?.username === "string"
-        ? req.body.username.trim().toLowerCase()
+        ? req.body.username.trim()
         : "";
+
 
     const password =
       typeof req.body?.password === "string"
         ? req.body.password
         : "";
 
+
+    const confirmPassword =
+      typeof req.body?.confirmPassword === "string"
+        ? req.body.confirmPassword
+        : "";
+
+
     const accessKey =
       typeof req.body?.accessKey === "string"
         ? req.body.accessKey.trim()
         : "";
+
 
     // ==================================================
     // Validation
@@ -1382,79 +1468,100 @@ async function register(
       !password ||
       !accessKey
     ) {
+
       return res.status(400).json({
         success: false,
         message:
           "اسم المستخدم وكلمة المرور و Access Key مطلوبة"
       });
+
     }
+
 
     if (
       username.length < 3 ||
       username.length > 24
     ) {
+
       return res.status(400).json({
         success: false,
         message:
           "اسم المستخدم يجب أن يكون بين 3 و24 حرفاً"
       });
+
     }
+
 
     if (
       password.length < 6
     ) {
+
       return res.status(400).json({
         success: false,
         message:
           "كلمة المرور يجب أن تكون 6 أحرف على الأقل"
       });
+
     }
 
+
     if (
-      !/^[a-z0-9_-]+$/.test(username)
+      confirmPassword &&
+      password !== confirmPassword
     ) {
+
+      return res.status(400).json({
+        success: false,
+        message:
+          "كلمتا المرور غير متطابقتين"
+      });
+
+    }
+
+
+    if (
+      !/^[a-zA-Z0-9_-]+$/.test(username)
+    ) {
+
       return res.status(400).json({
         success: false,
         message:
           "اسم المستخدم يمكن أن يحتوي على الحروف والأرقام و _ و - فقط"
       });
+
     }
 
-    await client.query(
-      "BEGIN"
-    );
 
     // ==================================================
-    // Lock / Consume Registration Key
+    // Transaction
+    // ==================================================
+
+    await client.query("BEGIN");
+
+
+    // ==================================================
+    // Lock Registration Key
     // ==================================================
 
     const keyResult =
       await client.query(
         `
-        UPDATE access_keys
-        SET
-          used = TRUE,
-          used_by = $1,
-          used_at = NOW()
-        WHERE id = (
-          SELECT id
-          FROM access_keys
-          WHERE key = $2
-          AND used = FALSE
-          FOR UPDATE SKIP LOCKED
-          LIMIT 1
-        )
-        RETURNING *
+        SELECT *
+        FROM access_keys
+        WHERE key = $1
+        AND used = FALSE
+        FOR UPDATE
         `,
         [
-          username,
           accessKey
         ]
       );
 
+
     if (
       keyResult.rows.length === 0
     ) {
+
       await client.query(
         "ROLLBACK"
       );
@@ -1464,13 +1571,16 @@ async function register(
         message:
           "Access Key غير صالح أو مستعمل"
       });
+
     }
+
 
     const registrationKey =
       keyResult.rows[0];
 
+
     // ==================================================
-    // Username Check
+    // Check Username
     // ==================================================
 
     const usernameCheck =
@@ -1482,12 +1592,16 @@ async function register(
               LOWER($1)
         LIMIT 1
         `,
-        [username]
+        [
+          username
+        ]
       );
+
 
     if (
       usernameCheck.rows.length > 0
     ) {
+
       await client.query(
         "ROLLBACK"
       );
@@ -1497,7 +1611,50 @@ async function register(
         message:
           "اسم المستخدم موجود بالفعل"
       });
+
     }
+
+
+    // ==================================================
+    // Discord Account Check
+    // ==================================================
+
+    if (
+      registrationKey.discord_id
+    ) {
+
+      const discordCheck =
+        await client.query(
+          `
+          SELECT id
+          FROM accounts
+          WHERE discord_id = $1
+          LIMIT 1
+          `,
+          [
+            registrationKey.discord_id
+          ]
+        );
+
+
+      if (
+        discordCheck.rows.length > 0
+      ) {
+
+        await client.query(
+          "ROLLBACK"
+        );
+
+        return res.status(409).json({
+          success: false,
+          message:
+            "حساب Discord هذا مسجل مسبقاً"
+        });
+
+      }
+
+    }
+
 
     // ==================================================
     // Password Hash
@@ -1508,6 +1665,17 @@ async function register(
         password,
         12
       );
+
+
+    // ==================================================
+    // Determine Auth Provider
+    // ==================================================
+
+    const authProvider =
+      registrationKey.discord_id
+        ? "discord"
+        : "password";
+
 
     // ==================================================
     // Create Account
@@ -1520,6 +1688,10 @@ async function register(
           username,
           password,
           access_key,
+          discord_id,
+          discord_username,
+          discord_global_name,
+          discord_avatar,
           auth_provider,
           created_at,
           last_login_at
@@ -1528,42 +1700,89 @@ async function register(
           $1,
           $2,
           $3,
-          'password',
+          $4,
+          $5,
+          $6,
+          $7,
+          $8,
           NOW(),
           NOW()
         )
-        RETURNING id
+        RETURNING *
         `,
         [
           username,
+
           passwordHash,
-          accessKey
+
+          accessKey,
+
+          registrationKey.discord_id ||
+            null,
+
+          null,
+
+          null,
+
+          null,
+
+          authProvider
         ]
       );
 
-    const accountId =
-      accountResult.rows[0].id;
+
+    const account =
+      accountResult.rows[0];
+
 
     // ==================================================
-    // Link Key
+    // If Discord Registration
+    // Get Discord Information
+    // ==================================================
+
+    if (
+      registrationKey.discord_id
+    ) {
+
+      // معلومات Discord الأساسية
+      // يتم ربطها من المفتاح فقط.
+      // لا نعتمد على بيانات غير موثوقة من Frontend.
+
+      // لا توجد حاجة لتحديث username Discord هنا.
+      // discord_id وحده يكفي لربط الحساب.
+    }
+
+
+    // ==================================================
+    // Consume Access Key
     // ==================================================
 
     await client.query(
       `
       UPDATE access_keys
       SET
-        account_id = $1
-      WHERE id = $2
+        used = TRUE,
+        used_by = $1,
+        account_id = $2,
+        used_at = NOW()
+      WHERE id = $3
       `,
       [
-        accountId,
+        username,
+        account.id,
         registrationKey.id
       ]
     );
 
+
+    // ==================================================
+    // Commit
+    // ==================================================
+
     await client.query(
       "COMMIT"
     );
+
 
     // ==================================================
     // Session
@@ -1571,15 +1790,20 @@ async function register(
 
     const sessionToken =
       createSessionToken(
-        accountId
+        account.id
       );
+
 
     console.log(
       "🆕 Account created:",
-      username
+      username,
+      "| provider:",
+      authProvider
     );
 
+
     return res.status(201).json({
+
       success: true,
 
       message:
@@ -1589,33 +1813,42 @@ async function register(
 
       user: {
         username,
+
         accessKey
       },
 
       accessKey
+
     });
 
+
   } catch (error) {
+
     try {
       await client.query(
         "ROLLBACK"
       );
     } catch {}
 
+
     console.error(
       "Register Error:",
       error
     );
 
+
     if (
       error?.code === "23505"
     ) {
+
       return res.status(409).json({
         success: false,
         message:
           "اسم المستخدم موجود بالفعل"
       });
+
     }
+
 
     return res.status(500).json({
       success: false,
@@ -1623,10 +1856,15 @@ async function register(
         "Internal server error"
     });
 
+
   } finally {
+
     client.release();
+
   }
+
 }
+
 
 app.post(
   "/register",
@@ -1638,35 +1876,43 @@ app.post(
   register
 );
 
+
 // ==================================================
-// Login
+// Login Username / Password
 // ==================================================
 
 async function login(
   req,
   res
 ) {
+
   try {
+
     const username =
       typeof req.body?.username === "string"
-        ? req.body.username.trim().toLowerCase()
+        ? req.body.username.trim()
         : "";
+
 
     const password =
       typeof req.body?.password === "string"
         ? req.body.password
         : "";
 
+
     if (
       !username ||
       !password
     ) {
+
       return res.status(400).json({
         success: false,
         message:
           "Username and password are required"
       });
+
     }
+
 
     const result =
       await pool.query(
@@ -1677,21 +1923,28 @@ async function login(
               LOWER($1)
         LIMIT 1
         `,
-        [username]
+        [
+          username
+        ]
       );
+
 
     if (
       result.rows.length === 0
     ) {
+
       return res.status(401).json({
         success: false,
         message:
           "اسم المستخدم أو كلمة المرور غير صحيحة"
       });
+
     }
+
 
     const account =
       result.rows[0];
+
 
     // ==================================================
     // Discord Account
@@ -1701,22 +1954,28 @@ async function login(
       account.auth_provider === "discord" &&
       account.discord_id
     ) {
+
       return res.status(403).json({
         success: false,
         message:
           "هذا الحساب مرتبط بـ Discord. استعمل تسجيل الدخول عبر Discord."
       });
+
     }
+
 
     if (
       !account.password
     ) {
+
       return res.status(401).json({
         success: false,
         message:
           "اسم المستخدم أو كلمة المرور غير صحيحة"
       });
+
     }
+
 
     const correct =
       await bcrypt.compare(
@@ -1724,13 +1983,17 @@ async function login(
         account.password
       );
 
+
     if (!correct) {
+
       return res.status(401).json({
         success: false,
         message:
           "اسم المستخدم أو كلمة المرور غير صحيحة"
       });
+
     }
+
 
     await pool.query(
       `
@@ -1738,15 +2001,20 @@ async function login(
       SET last_login_at = NOW()
       WHERE id = $1
       `,
-      [account.id]
+      [
+        account.id
+      ]
     );
+
 
     const sessionToken =
       createSessionToken(
         account.id
       );
 
+
     return res.json({
+
       success: true,
 
       message:
@@ -1764,9 +2032,12 @@ async function login(
 
       accessKey:
         account.access_key || null
+
     });
 
+
   } catch (error) {
+
     console.error(
       "Login Error:",
       error
@@ -1777,8 +2048,11 @@ async function login(
       message:
         "Internal server error"
     });
+
   }
+
 }
+
 
 app.post(
   "/login",
@@ -1790,6 +2064,7 @@ app.post(
   login
 );
 
+
 // ==================================================
 // Current Account
 // ==================================================
@@ -1798,11 +2073,15 @@ async function getCurrentAccount(
   req,
   res
 ) {
+
   try {
+
     return res.json({
+
       success: true,
 
       user: {
+
         id:
           req.account.id,
 
@@ -1827,10 +2106,13 @@ async function getCurrentAccount(
         discordAvatar:
           req.account.discord_avatar ||
           null
+
       }
+
     });
 
   } catch (error) {
+
     console.error(
       "Current Account Error:",
       error
@@ -1841,8 +2123,11 @@ async function getCurrentAccount(
       message:
         "Internal server error"
     });
+
   }
+
 }
+
 
 app.get(
   "/api/account/me",
@@ -1856,21 +2141,25 @@ app.get(
   getCurrentAccount
 );
 
+
 // ==================================================
-// Generate New Key For Account
+// Generate New Key For Current Account
 // ==================================================
 
 async function generateAccountKey(
   req,
   res
 ) {
+
   const client =
     await pool.connect();
 
   try {
+
     await client.query(
       "BEGIN"
     );
+
 
     const accountResult =
       await client.query(
@@ -1880,12 +2169,16 @@ async function generateAccountKey(
         WHERE id = $1
         FOR UPDATE
         `,
-        [req.account.id]
+        [
+          req.account.id
+        ]
       );
+
 
     if (
       accountResult.rows.length === 0
     ) {
+
       await client.query(
         "ROLLBACK"
       );
@@ -1895,10 +2188,13 @@ async function generateAccountKey(
         message:
           "الحساب غير موجود"
       });
+
     }
+
 
     const account =
       accountResult.rows[0];
+
 
     const newKey =
       await createKeyForAccount(
@@ -1906,16 +2202,20 @@ async function generateAccountKey(
         account
       );
 
+
     await client.query(
       "COMMIT"
     );
 
+
     console.log(
-      "🔑 New key generated:",
+      "🔑 Account generated new key:",
       account.username
     );
 
+
     return res.json({
+
       success: true,
 
       message:
@@ -1923,19 +2223,24 @@ async function generateAccountKey(
 
       accessKey:
         newKey
+
     });
 
+
   } catch (error) {
+
     try {
       await client.query(
         "ROLLBACK"
       );
     } catch {}
 
+
     console.error(
       "Generate Account Key Error:",
       error
     );
+
 
     return res.status(500).json({
       success: false,
@@ -1943,10 +2248,15 @@ async function generateAccountKey(
         "Internal server error"
     });
 
+
   } finally {
+
     client.release();
+
   }
+
 }
+
 
 app.post(
   "/api/account/generate-key",
@@ -1960,6 +2270,7 @@ app.post(
   generateAccountKey
 );
 
+
 // ==================================================
 // Admin Stats
 // ==================================================
@@ -1967,23 +2278,27 @@ app.post(
 app.get(
   "/admin/stats",
   async (req, res) => {
+
     try {
+
       const adminKey =
-        typeof req.headers["x-admin-key"] === "string"
-          ? req.headers["x-admin-key"]
-          : "";
+        req.headers["x-admin-key"];
+
 
       if (
         !ADMIN_KEY ||
         !adminKey ||
         adminKey !== ADMIN_KEY
       ) {
+
         return res.status(401).json({
           success: false,
           message:
             "Unauthorized"
         });
+
       }
+
 
       const accounts =
         await pool.query(
@@ -1993,6 +2308,7 @@ app.get(
           `
         );
 
+
       const totalKeys =
         await pool.query(
           `
@@ -2000,6 +2316,7 @@ app.get(
           FROM access_keys
           `
         );
+
 
       const registrationKeys =
         await pool.query(
@@ -2010,6 +2327,7 @@ app.get(
           `
         );
 
+
       const generatedKeys =
         await pool.query(
           `
@@ -2019,7 +2337,9 @@ app.get(
           `
         );
 
+
       return res.json({
+
         success: true,
 
         accounts:
@@ -2033,22 +2353,29 @@ app.get(
 
         generatedKeys:
           generatedKeys.rows[0].count
+
       });
 
+
     } catch (error) {
+
       console.error(
         "Stats Error:",
         error
       );
+
 
       return res.status(500).json({
         success: false,
         message:
           "Internal server error"
       });
+
     }
+
   }
 );
+
 
 // ==================================================
 // 404
@@ -2056,13 +2383,19 @@ app.get(
 
 app.use(
   (req, res) => {
+
     return res.status(404).json({
+
       success: false,
+
       message:
         `Route not found: ${req.method} ${req.originalUrl}`
+
     });
+
   }
 );
+
 
 // ==================================================
 // Error Handler
@@ -2075,31 +2408,39 @@ app.use(
     res,
     next
   ) => {
+
     console.error(
       "Server Error:",
       err
     );
+
 
     return res.status(500).json({
       success: false,
       message:
         "Internal server error"
     });
+
   }
 );
+
 
 // ==================================================
 // Start Server
 // ==================================================
 
 async function startServer() {
+
   try {
+
     await initDatabase();
+
 
     app.listen(
       PORT,
       "0.0.0.0",
       () => {
+
         console.log(
           `🚀 N10 Discord Backend running on port ${PORT}`
         );
@@ -2127,17 +2468,23 @@ async function startServer() {
         console.log(
           "🔄 Generate Account Key: /api/account/generate-key"
         );
+
       }
     );
 
+
   } catch (error) {
+
     console.error(
       "❌ Database startup error:",
       error
     );
 
     process.exit(1);
+
   }
+
 }
+
 
 startServer();
