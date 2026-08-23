@@ -15,7 +15,8 @@ const app = express();
 const PORT = Number(process.env.PORT || 10000);
 
 /*
-  رابط الموقع الذي يرجع إليه Discord
+  مهم:
+  FRONTEND_URL فيه مسار GitHub Pages.
 */
 const FRONTEND_URL = String(
   process.env.FRONTEND_URL ||
@@ -23,8 +24,8 @@ const FRONTEND_URL = String(
 ).replace(/\/+$/, "");
 
 /*
-  Origin الحقيقي لموقع GitHub Pages
-  مهم جدًا للـ CORS.
+  مهم جداً:
+  CORS لا يستعمل مسار /N10-SERVER-MENA.
 */
 const FRONTEND_ORIGIN = String(
   process.env.FRONTEND_ORIGIN ||
@@ -130,17 +131,27 @@ pool.on("error", (error) => {
 });
 
 /* =========================================================
-   CORS
+   MIDDLEWARE
 ========================================================= */
 
-const allowedOrigins = new Set([
-  FRONTEND_ORIGIN,
-  "https://siko6476.github.io",
-  "http://localhost:3000",
-  "http://localhost:5173",
-  "http://127.0.0.1:3000",
-  "http://127.0.0.1:5173"
-]);
+app.disable("x-powered-by");
+
+app.set("trust proxy", 1);
+
+/*
+  CORS FIX
+  ================================
+
+  Browser Origin:
+  https://siko6476.github.io
+
+  وليس:
+  https://siko6476.github.io/N10-SERVER-MENA
+*/
+
+const allowedOrigins = [
+  FRONTEND_ORIGIN
+];
 
 app.use(
   cors({
@@ -148,24 +159,25 @@ app.use(
 
       /*
         Requests without Origin:
-        Render health checks, curl, etc.
+        مثل بعض أدوات السيرفر والـ health checks.
       */
-
       if (!origin) {
         return callback(null, true);
       }
 
-      if (allowedOrigins.has(origin)) {
+      if (
+        allowedOrigins.includes(origin)
+      ) {
         return callback(null, true);
       }
 
-      console.log(
-        "⚠️ CORS blocked:",
+      console.error(
+        "❌ CORS blocked origin:",
         origin
       );
 
       return callback(
-        new Error("CORS not allowed")
+        new Error("Not allowed by CORS")
       );
     },
 
@@ -186,22 +198,6 @@ app.use(
     optionsSuccessStatus: 204
   })
 );
-
-/*
-  Handle OPTIONS explicitly.
-*/
-app.options(
-  "*",
-  cors()
-);
-
-/* =========================================================
-   MIDDLEWARE
-========================================================= */
-
-app.disable("x-powered-by");
-
-app.set("trust proxy", 1);
 
 app.use(
   express.json({
@@ -319,8 +315,9 @@ function noCache(res) {
    FRONTEND REDIRECT
 ========================================================= */
 
-function frontendRedirect(params = {}) {
-
+function frontendRedirect(
+  params = {}
+) {
   const url =
     new URL(
       FRONTEND_URL + "/"
@@ -330,12 +327,10 @@ function frontendRedirect(params = {}) {
     const [key, value]
       of Object.entries(params)
   ) {
-
     if (
       value !== undefined &&
       value !== null
     ) {
-
       url.searchParams.set(
         key,
         String(value)
@@ -477,7 +472,7 @@ function verifyOAuthState(state) {
 }
 
 /* =========================================================
-   CREATE ACCESS KEY
+   CREATE NEW ACCESS KEY
 ========================================================= */
 
 async function createAccessKey(
@@ -572,18 +567,22 @@ async function invalidateOldDiscordKeys(
     UPDATE access_keys
     SET
       used = TRUE,
+
       used_by = COALESCE(
         used_by,
         $2
       ),
+
       account_id = COALESCE(
         account_id,
         $3
       ),
+
       used_at = COALESCE(
         used_at,
         NOW()
       )
+
     WHERE
       discord_id = $1
       AND used = FALSE
@@ -870,13 +869,15 @@ app.get(
   "/",
   (req, res) => {
 
+    noCache(res);
+
     res.json({
       success: true,
       name: "N10 SERVER MENA",
       status: "online",
-      cors: FRONTEND_ORIGIN
+      cors: FRONTEND_ORIGIN,
+      frontend: FRONTEND_URL
     });
-
   }
 );
 
@@ -894,12 +895,14 @@ app.get(
         "SELECT 1"
       );
 
+      noCache(res);
+
       res.json({
         success: true,
         status: "online",
         database: "connected",
-        frontend: FRONTEND_URL,
-        origin: FRONTEND_ORIGIN
+        cors: FRONTEND_ORIGIN,
+        frontend: FRONTEND_URL
       });
 
     } catch (error) {
@@ -915,7 +918,6 @@ app.get(
         database: "error"
       });
     }
-
   }
 );
 
@@ -982,7 +984,6 @@ app.get(
         "تعذر بدء تسجيل الدخول عبر Discord."
       );
     }
-
   }
 );
 
@@ -1016,10 +1017,6 @@ app.get(
           ? req.query.error
           : "";
 
-      /* =====================================================
-         CANCEL
-      ===================================================== */
-
       if (discordError) {
 
         return res.redirect(
@@ -1029,10 +1026,6 @@ app.get(
           })
         );
       }
-
-      /* =====================================================
-         STATE
-      ===================================================== */
 
       if (
         !verifyOAuthState(
@@ -1058,9 +1051,9 @@ app.get(
         );
       }
 
-      /* =====================================================
+      /* ===================================================
          TOKEN
-      ===================================================== */
+      =================================================== */
 
       const tokenResponse =
         await fetch(
@@ -1113,9 +1106,9 @@ app.get(
         );
       }
 
-      /* =====================================================
-         DISCORD USER
-      ===================================================== */
+      /* ===================================================
+         USER
+      =================================================== */
 
       const userResponse =
         await fetch(
@@ -1148,10 +1141,6 @@ app.get(
           })
         );
       }
-
-      /* =====================================================
-         DISCORD DATA
-      ===================================================== */
 
       const discordId =
         String(
@@ -1196,9 +1185,9 @@ app.get(
         discordUsername
       );
 
-      /* =====================================================
-         EXISTING ACCOUNT
-      ===================================================== */
+      /* ===================================================
+         FIND ACCOUNT
+      =================================================== */
 
       const existingAccount =
         await pool.query(
@@ -1214,6 +1203,10 @@ app.get(
           `,
           [discordId]
         );
+
+      /* ===================================================
+         EXISTING ACCOUNT
+      =================================================== */
 
       if (
         existingAccount.rows.length > 0
@@ -1288,14 +1281,8 @@ app.get(
           ]
         );
 
-        console.log(
-          "✅ Existing account:",
-          account.username
-        );
-
         return res.redirect(
           frontendRedirect({
-
             success:
               "true",
 
@@ -1319,22 +1306,17 @@ app.get(
         );
       }
 
-      /* =====================================================
+      /* ===================================================
          NEW DISCORD ACCOUNT
-      ===================================================== */
+      =================================================== */
 
       const newKey =
         await createAccessKey(
           discordId
         );
 
-      console.log(
-        "🆕 New Discord user"
-      );
-
       return res.redirect(
         frontendRedirect({
-
           success:
             "true",
 
@@ -1359,8 +1341,6 @@ app.get(
         error
       );
 
-      noCache(res);
-
       return res.redirect(
         frontendRedirect({
           discordError:
@@ -1368,7 +1348,6 @@ app.get(
         })
       );
     }
-
   }
 );
 
@@ -1404,8 +1383,10 @@ app.post(
 
     if (
       !cleanName ||
-      typeof password !== "string" ||
-      typeof confirmPassword !== "string" ||
+      typeof password !==
+        "string" ||
+      typeof confirmPassword !==
+        "string" ||
       !key
     ) {
 
@@ -1476,10 +1457,6 @@ app.post(
         "BEGIN"
       );
 
-      /* ===================================================
-         LOCK KEY
-      =================================================== */
-
       const keyResult =
         await client.query(
           `
@@ -1527,10 +1504,6 @@ app.post(
         );
       }
 
-      /* ===================================================
-         USERNAME
-      =================================================== */
-
       const usernameResult =
         await client.query(
           `
@@ -1543,7 +1516,8 @@ app.post(
         );
 
       if (
-        usernameResult.rows.length > 0
+        usernameResult.rows.length >
+        0
       ) {
 
         await client.query(
@@ -1557,19 +1531,11 @@ app.post(
         );
       }
 
-      /* ===================================================
-         PASSWORD
-      =================================================== */
-
       const passwordHash =
         await bcrypt.hash(
           password,
           12
         );
-
-      /* ===================================================
-         ACCOUNT
-      =================================================== */
 
       const accountResult =
         await client.query(
@@ -1613,10 +1579,6 @@ app.post(
       const account =
         accountResult.rows[0];
 
-      /* ===================================================
-         MARK KEY USED
-      =================================================== */
-
       await client.query(
         `
         UPDATE access_keys
@@ -1633,10 +1595,6 @@ app.post(
           keyRow.id
         ]
       );
-
-      /* ===================================================
-         SESSION
-      =================================================== */
 
       const sessionToken =
         generateSessionToken();
@@ -1680,7 +1638,9 @@ app.post(
         account.username
       );
 
-      return res.status(201).json({
+      return res.status(
+        201
+      ).json({
 
         success: true,
 
@@ -1709,7 +1669,6 @@ app.post(
           createdAt:
             account.created_at
         }
-
       });
 
     } catch (error) {
@@ -1724,7 +1683,8 @@ app.post(
       );
 
       if (
-        error.code === "23505"
+        error.code ===
+        "23505"
       ) {
 
         return sendError(
@@ -1744,7 +1704,6 @@ app.post(
 
       client.release();
     }
-
   }
 );
 
@@ -1770,7 +1729,8 @@ app.post(
 
       if (
         !normalizedName ||
-        typeof password !== "string"
+        typeof password !==
+          "string"
       ) {
 
         return sendError(
@@ -1908,7 +1868,6 @@ app.post(
           createdAt:
             account.created_at
         }
-
       });
 
     } catch (error) {
@@ -1924,7 +1883,6 @@ app.post(
         "حدث خطأ أثناء تسجيل الدخول."
       );
     }
-
   }
 );
 
@@ -2065,7 +2023,6 @@ app.get(
           lastLoginAt:
             user.last_login_at
         }
-
       });
 
     } catch (error) {
@@ -2081,7 +2038,6 @@ app.get(
         "حدث خطأ في السيرفر."
       );
     }
-
   }
 );
 
@@ -2143,7 +2099,6 @@ app.post(
         "حدث خطأ أثناء تسجيل الخروج."
       );
     }
-
   }
 );
 
@@ -2172,8 +2127,10 @@ app.get(
         ];
 
       if (
-        typeof providedKey !== "string" ||
-        providedKey !== ADMIN_KEY
+        typeof providedKey !==
+          "string" ||
+        providedKey !==
+        ADMIN_KEY
       ) {
 
         return sendError(
@@ -2225,12 +2182,11 @@ app.get(
         "حدث خطأ في السيرفر."
       );
     }
-
   }
 );
 
 /* =========================================================
-   CLEANUP
+   SESSION CLEANUP
 ========================================================= */
 
 async function cleanupSessions() {
@@ -2282,7 +2238,6 @@ app.use(
       path:
         req.path
     });
-
   }
 );
 
@@ -2318,7 +2273,6 @@ app.use(
       message:
         "حدث خطأ داخلي في السيرفر."
     });
-
   }
 );
 
@@ -2371,7 +2325,7 @@ async function startServer() {
           );
 
           console.log(
-            `🌐 Frontend Origin: ${FRONTEND_ORIGIN}`
+            `🌐 CORS Origin: ${FRONTEND_ORIGIN}`
           );
 
           console.log(
@@ -2380,10 +2334,6 @@ async function startServer() {
 
           console.log(
             "🗄️ PostgreSQL: CONNECTED"
-          );
-
-          console.log(
-            "🔐 CORS: ENABLED"
           );
 
           console.log(
