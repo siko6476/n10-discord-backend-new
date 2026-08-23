@@ -14,19 +14,11 @@ const app = express();
 
 const PORT = Number(process.env.PORT || 10000);
 
-/*
-  مهم:
-  FRONTEND_URL فيه مسار GitHub Pages.
-*/
 const FRONTEND_URL = String(
   process.env.FRONTEND_URL ||
     "https://siko6476.github.io/N10-SERVER-MENA"
 ).replace(/\/+$/, "");
 
-/*
-  مهم جداً:
-  CORS لا يستعمل مسار /N10-SERVER-MENA.
-*/
 const FRONTEND_ORIGIN = String(
   process.env.FRONTEND_ORIGIN ||
     "https://siko6476.github.io"
@@ -59,6 +51,7 @@ const SESSION_MS =
   60 *
   60 *
   1000;
+
 
 /* =========================================================
    ENVIRONMENT CHECK
@@ -101,19 +94,17 @@ if (missing.length > 0) {
   );
 }
 
+
 /* =========================================================
    POSTGRESQL
 ========================================================= */
 
 const pool = new Pool({
-  connectionString:
-    DATABASE_URL || undefined,
+  connectionString: DATABASE_URL || undefined,
 
   ssl:
     process.env.NODE_ENV === "production"
-      ? {
-          rejectUnauthorized: false
-        }
+      ? { rejectUnauthorized: false }
       : false,
 
   max: 10,
@@ -130,6 +121,7 @@ pool.on("error", (error) => {
   );
 });
 
+
 /* =========================================================
    MIDDLEWARE
 ========================================================= */
@@ -138,16 +130,10 @@ app.disable("x-powered-by");
 
 app.set("trust proxy", 1);
 
-/*
-  CORS FIX
-  ================================
 
-  Browser Origin:
-  https://siko6476.github.io
-
-  وليس:
-  https://siko6476.github.io/N10-SERVER-MENA
-*/
+/* =========================================================
+   CORS
+========================================================= */
 
 const allowedOrigins = [
   FRONTEND_ORIGIN
@@ -159,8 +145,9 @@ app.use(
 
       /*
         Requests without Origin:
-        مثل بعض أدوات السيرفر والـ health checks.
+        مثل health checks وبعض أدوات السيرفر.
       */
+
       if (!origin) {
         return callback(null, true);
       }
@@ -212,6 +199,7 @@ app.use(
   })
 );
 
+
 /* =========================================================
    HELPERS
 ========================================================= */
@@ -221,11 +209,14 @@ function sendError(
   status,
   message
 ) {
-  return res.status(status).json({
-    success: false,
-    message
-  });
+  return res
+    .status(status)
+    .json({
+      success: false,
+      message
+    });
 }
+
 
 function cleanUsername(username) {
   return String(
@@ -233,11 +224,13 @@ function cleanUsername(username) {
   ).trim();
 }
 
+
 function normalizeUsername(username) {
   return cleanUsername(
     username
   ).toLowerCase();
 }
+
 
 function validUsername(username) {
   return /^[a-zA-Z0-9_.-]{3,24}$/.test(
@@ -245,7 +238,9 @@ function validUsername(username) {
   );
 }
 
+
 function validPassword(password) {
+
   if (
     typeof password !== "string"
   ) {
@@ -264,18 +259,22 @@ function validPassword(password) {
   );
 }
 
+
 function validAccessKey(key) {
+
   return (
     typeof key === "string" &&
     /^N10-[A-Za-z0-9]+$/.test(key)
   );
 }
 
+
 /* =========================================================
-   ACCESS KEY
+   TOKENS
 ========================================================= */
 
 function generateAccessKey() {
+
   return (
     "N10-" +
     crypto
@@ -284,17 +283,21 @@ function generateAccessKey() {
   );
 }
 
+
 function generateSessionToken() {
+
   return crypto
     .randomBytes(32)
     .toString("hex");
 }
+
 
 /* =========================================================
    NO CACHE
 ========================================================= */
 
 function noCache(res) {
+
   res.setHeader(
     "Cache-Control",
     "no-store, no-cache, must-revalidate, proxy-revalidate"
@@ -311,13 +314,13 @@ function noCache(res) {
   );
 }
 
+
 /* =========================================================
    FRONTEND REDIRECT
 ========================================================= */
 
-function frontendRedirect(
-  params = {}
-) {
+function frontendRedirect(params = {}) {
+
   const url =
     new URL(
       FRONTEND_URL + "/"
@@ -325,12 +328,14 @@ function frontendRedirect(
 
   for (
     const [key, value]
-      of Object.entries(params)
+    of Object.entries(params)
   ) {
+
     if (
       value !== undefined &&
       value !== null
     ) {
+
       url.searchParams.set(
         key,
         String(value)
@@ -340,6 +345,7 @@ function frontendRedirect(
 
   return url.toString();
 }
+
 
 /* =========================================================
    OAUTH STATE
@@ -377,6 +383,7 @@ function createOAuthState() {
     `${payload}.${signature}`
   );
 }
+
 
 function verifyOAuthState(state) {
 
@@ -471,8 +478,9 @@ function verifyOAuthState(state) {
   );
 }
 
+
 /* =========================================================
-   CREATE NEW ACCESS KEY
+   CREATE ACCESS KEY
 ========================================================= */
 
 async function createAccessKey(
@@ -534,7 +542,8 @@ async function createAccessKey(
     } catch (error) {
 
       if (
-        error.code === "23505"
+        error.code ===
+        "23505"
       ) {
         continue;
       }
@@ -547,6 +556,7 @@ async function createAccessKey(
     "Unable to generate unique Access Key"
   );
 }
+
 
 /* =========================================================
    INVALIDATE OLD DISCORD KEYS
@@ -567,22 +577,18 @@ async function invalidateOldDiscordKeys(
     UPDATE access_keys
     SET
       used = TRUE,
-
       used_by = COALESCE(
         used_by,
         $2
       ),
-
       account_id = COALESCE(
         account_id,
         $3
       ),
-
       used_at = COALESCE(
         used_at,
         NOW()
       )
-
     WHERE
       discord_id = $1
       AND used = FALSE
@@ -594,6 +600,7 @@ async function invalidateOldDiscordKeys(
     ]
   );
 }
+
 
 /* =========================================================
    DATABASE INIT
@@ -609,6 +616,7 @@ async function initDatabase() {
     await client.query(
       "BEGIN"
     );
+
 
     /* =====================================================
        ACCOUNTS
@@ -645,40 +653,48 @@ async function initDatabase() {
       )
     `);
 
+
     await client.query(`
       ALTER TABLE accounts
       ADD COLUMN IF NOT EXISTS password TEXT
     `);
+
 
     await client.query(`
       ALTER TABLE accounts
       ADD COLUMN IF NOT EXISTS access_key TEXT
     `);
 
+
     await client.query(`
       ALTER TABLE accounts
       ADD COLUMN IF NOT EXISTS discord_id TEXT
     `);
+
 
     await client.query(`
       ALTER TABLE accounts
       ADD COLUMN IF NOT EXISTS discord_username TEXT
     `);
 
+
     await client.query(`
       ALTER TABLE accounts
       ADD COLUMN IF NOT EXISTS discord_global_name TEXT
     `);
+
 
     await client.query(`
       ALTER TABLE accounts
       ADD COLUMN IF NOT EXISTS discord_avatar TEXT
     `);
 
+
     await client.query(`
       ALTER TABLE accounts
       ADD COLUMN IF NOT EXISTS discord_email TEXT
     `);
+
 
     await client.query(`
       ALTER TABLE accounts
@@ -686,16 +702,19 @@ async function initDatabase() {
       DEFAULT 'password'
     `);
 
+
     await client.query(`
       ALTER TABLE accounts
       ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ
       DEFAULT NOW()
     `);
 
+
     await client.query(`
       ALTER TABLE accounts
       ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ
     `);
+
 
     /* =====================================================
        ACCESS KEYS
@@ -726,26 +745,31 @@ async function initDatabase() {
       )
     `);
 
+
     await client.query(`
       ALTER TABLE access_keys
       ADD COLUMN IF NOT EXISTS used BOOLEAN
       DEFAULT FALSE
     `);
 
+
     await client.query(`
       ALTER TABLE access_keys
       ADD COLUMN IF NOT EXISTS used_by TEXT
     `);
+
 
     await client.query(`
       ALTER TABLE access_keys
       ADD COLUMN IF NOT EXISTS account_id INTEGER
     `);
 
+
     await client.query(`
       ALTER TABLE access_keys
       ADD COLUMN IF NOT EXISTS discord_id TEXT
     `);
+
 
     await client.query(`
       ALTER TABLE access_keys
@@ -753,10 +777,12 @@ async function initDatabase() {
       DEFAULT NOW()
     `);
 
+
     await client.query(`
       ALTER TABLE access_keys
       ADD COLUMN IF NOT EXISTS used_at TIMESTAMPTZ
     `);
+
 
     /* =====================================================
        SESSIONS
@@ -781,10 +807,12 @@ async function initDatabase() {
       )
     `);
 
+
     await client.query(`
       ALTER TABLE sessions
       ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ
     `);
+
 
     await client.query(`
       UPDATE sessions
@@ -793,6 +821,7 @@ async function initDatabase() {
         INTERVAL '30 days'
       WHERE expires_at IS NULL
     `);
+
 
     /* =====================================================
        INDEXES
@@ -804,11 +833,13 @@ async function initDatabase() {
       ON accounts(discord_id)
     `);
 
+
     await client.query(`
       CREATE INDEX IF NOT EXISTS
       idx_accounts_username
       ON accounts(username)
     `);
+
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS
@@ -816,11 +847,13 @@ async function initDatabase() {
       ON access_keys(discord_id)
     `);
 
+
     await client.query(`
       CREATE INDEX IF NOT EXISTS
       idx_access_keys_account_id
       ON access_keys(account_id)
     `);
+
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS
@@ -828,11 +861,13 @@ async function initDatabase() {
       ON sessions(user_id)
     `);
 
+
     await client.query(`
       CREATE INDEX IF NOT EXISTS
       idx_sessions_expires_at
       ON sessions(expires_at)
     `);
+
 
     await client.query(
       "COMMIT"
@@ -861,6 +896,7 @@ async function initDatabase() {
   }
 }
 
+
 /* =========================================================
    HOME
 ========================================================= */
@@ -880,6 +916,7 @@ app.get(
     });
   }
 );
+
 
 /* =========================================================
    HEALTH
@@ -921,6 +958,7 @@ app.get(
   }
 );
 
+
 /* =========================================================
    DISCORD LOGIN
 ========================================================= */
@@ -944,8 +982,10 @@ app.get(
         );
       }
 
+
       const state =
         createOAuthState();
+
 
       const params =
         new URLSearchParams({
@@ -963,6 +1003,7 @@ app.get(
 
           state
         });
+
 
       noCache(res);
 
@@ -987,6 +1028,7 @@ app.get(
   }
 );
 
+
 /* =========================================================
    DISCORD CALLBACK
 ========================================================= */
@@ -999,11 +1041,13 @@ app.get(
 
       noCache(res);
 
+
       const code =
         typeof req.query.code ===
         "string"
           ? req.query.code
           : "";
+
 
       const state =
         typeof req.query.state ===
@@ -1011,11 +1055,13 @@ app.get(
           ? req.query.state
           : "";
 
+
       const discordError =
         typeof req.query.error ===
         "string"
           ? req.query.error
           : "";
+
 
       if (discordError) {
 
@@ -1026,6 +1072,7 @@ app.get(
           })
         );
       }
+
 
       if (
         !verifyOAuthState(
@@ -1041,6 +1088,7 @@ app.get(
         );
       }
 
+
       if (!code) {
 
         return res.redirect(
@@ -1050,6 +1098,7 @@ app.get(
           })
         );
       }
+
 
       /* ===================================================
          TOKEN
@@ -1085,8 +1134,10 @@ app.get(
           }
         );
 
+
       const tokenData =
         await tokenResponse.json();
+
 
       if (
         !tokenResponse.ok ||
@@ -1106,6 +1157,7 @@ app.get(
         );
       }
 
+
       /* ===================================================
          USER
       =================================================== */
@@ -1121,8 +1173,10 @@ app.get(
           }
         );
 
+
       const discordUser =
         await userResponse.json();
+
 
       if (
         !userResponse.ok ||
@@ -1142,30 +1196,36 @@ app.get(
         );
       }
 
+
       const discordId =
         String(
           discordUser.id
         );
+
 
       const discordUsername =
         String(
           discordUser.username || ""
         );
 
+
       const discordGlobalName =
         String(
           discordUser.global_name || ""
         );
+
 
       const discordEmail =
         String(
           discordUser.email || ""
         );
 
+
       const discordAvatar =
         discordUser.avatar
           ? `https://cdn.discordapp.com/avatars/${discordId}/${discordUser.avatar}.png`
           : "";
+
 
       console.log(
         "===================================="
@@ -1184,6 +1244,7 @@ app.get(
         "Discord Username:",
         discordUsername
       );
+
 
       /* ===================================================
          FIND ACCOUNT
@@ -1204,6 +1265,7 @@ app.get(
           [discordId]
         );
 
+
       /* ===================================================
          EXISTING ACCOUNT
       =================================================== */
@@ -1215,16 +1277,19 @@ app.get(
         const account =
           existingAccount.rows[0];
 
+
         await invalidateOldDiscordKeys(
           discordId,
           account.id,
           account.username
         );
 
+
         const newKey =
           await createAccessKey(
             discordId
           );
+
 
         await pool.query(
           `
@@ -1248,14 +1313,17 @@ app.get(
           ]
         );
 
+
         const sessionToken =
           generateSessionToken();
+
 
         const expiresAt =
           new Date(
             Date.now() +
             SESSION_MS
           );
+
 
         await pool.query(
           `
@@ -1280,6 +1348,7 @@ app.get(
             expiresAt
           ]
         );
+
 
         return res.redirect(
           frontendRedirect({
@@ -1306,6 +1375,7 @@ app.get(
         );
       }
 
+
       /* ===================================================
          NEW DISCORD ACCOUNT
       =================================================== */
@@ -1314,6 +1384,7 @@ app.get(
         await createAccessKey(
           discordId
         );
+
 
       return res.redirect(
         frontendRedirect({
@@ -1351,6 +1422,7 @@ app.get(
   }
 );
 
+
 /* =========================================================
    REGISTER
 ========================================================= */
@@ -1366,20 +1438,24 @@ app.post(
       accessKey
     } = req.body || {};
 
+
     const cleanName =
       cleanUsername(
         username
       );
+
 
     const normalizedName =
       normalizeUsername(
         username
       );
 
+
     const key =
       String(
         accessKey ?? ""
       ).trim();
+
 
     if (
       !cleanName ||
@@ -1397,6 +1473,7 @@ app.post(
       );
     }
 
+
     if (
       !validUsername(
         cleanName
@@ -1409,6 +1486,7 @@ app.post(
         "اسم المستخدم يجب أن يكون بين 3 و24 حرفاً."
       );
     }
+
 
     if (
       !validPassword(
@@ -1423,6 +1501,7 @@ app.post(
       );
     }
 
+
     if (
       password !==
       confirmPassword
@@ -1434,6 +1513,7 @@ app.post(
         "كلمتا المرور غير متطابقتين."
       );
     }
+
 
     if (
       !validAccessKey(
@@ -1448,14 +1528,17 @@ app.post(
       );
     }
 
+
     const client =
       await pool.connect();
+
 
     try {
 
       await client.query(
         "BEGIN"
       );
+
 
       const keyResult =
         await client.query(
@@ -1473,6 +1556,7 @@ app.post(
           [key]
         );
 
+
       if (
         keyResult.rows.length === 0
       ) {
@@ -1488,8 +1572,10 @@ app.post(
         );
       }
 
+
       const keyRow =
         keyResult.rows[0];
+
 
       if (keyRow.used) {
 
@@ -1504,6 +1590,7 @@ app.post(
         );
       }
 
+
       const usernameResult =
         await client.query(
           `
@@ -1515,9 +1602,9 @@ app.post(
           [normalizedName]
         );
 
+
       if (
-        usernameResult.rows.length >
-        0
+        usernameResult.rows.length > 0
       ) {
 
         await client.query(
@@ -1531,11 +1618,13 @@ app.post(
         );
       }
 
+
       const passwordHash =
         await bcrypt.hash(
           password,
           12
         );
+
 
       const accountResult =
         await client.query(
@@ -1576,8 +1665,10 @@ app.post(
           ]
         );
 
+
       const account =
         accountResult.rows[0];
+
 
       await client.query(
         `
@@ -1596,14 +1687,17 @@ app.post(
         ]
       );
 
+
       const sessionToken =
         generateSessionToken();
+
 
       const expiresAt =
         new Date(
           Date.now() +
           SESSION_MS
         );
+
 
       await client.query(
         `
@@ -1629,47 +1723,48 @@ app.post(
         ]
       );
 
+
       await client.query(
         "COMMIT"
       );
+
 
       console.log(
         "✅ Account created:",
         account.username
       );
 
-      return res.status(
-        201
-      ).json({
 
-        success: true,
+      return res
+        .status(201)
+        .json({
+          success: true,
 
-        message:
-          "تم إنشاء الحساب بنجاح.",
+          message:
+            "تم إنشاء الحساب بنجاح.",
 
-        sessionToken,
-
-        accessKey:
-          account.access_key,
-
-        user: {
-
-          id:
-            account.id,
-
-          username:
-            account.username,
+          sessionToken,
 
           accessKey:
             account.access_key,
 
-          discordId:
-            account.discord_id,
+          user: {
+            id:
+              account.id,
 
-          createdAt:
-            account.created_at
-        }
-      });
+            username:
+              account.username,
+
+            accessKey:
+              account.access_key,
+
+            discordId:
+              account.discord_id,
+
+            createdAt:
+              account.created_at
+          }
+        });
 
     } catch (error) {
 
@@ -1681,6 +1776,7 @@ app.post(
         "❌ Register error:",
         error
       );
+
 
       if (
         error.code ===
@@ -1694,6 +1790,7 @@ app.post(
         );
       }
 
+
       return sendError(
         res,
         500,
@@ -1706,6 +1803,7 @@ app.post(
     }
   }
 );
+
 
 /* =========================================================
    LOGIN
@@ -1722,10 +1820,12 @@ app.post(
         password
       } = req.body || {};
 
+
       const normalizedName =
         normalizeUsername(
           username
         );
+
 
       if (
         !normalizedName ||
@@ -1739,6 +1839,7 @@ app.post(
           "الرجاء إدخال اسم المستخدم وكلمة المرور."
         );
       }
+
 
       const result =
         await pool.query(
@@ -1757,6 +1858,7 @@ app.post(
           [normalizedName]
         );
 
+
       if (
         result.rows.length === 0
       ) {
@@ -1768,8 +1870,10 @@ app.post(
         );
       }
 
+
       const account =
         result.rows[0];
+
 
       if (
         !account.password
@@ -1782,11 +1886,13 @@ app.post(
         );
       }
 
+
       const passwordOK =
         await bcrypt.compare(
           password,
           account.password
         );
+
 
       if (!passwordOK) {
 
@@ -1797,14 +1903,17 @@ app.post(
         );
       }
 
+
       const sessionToken =
         generateSessionToken();
+
 
       const expiresAt =
         new Date(
           Date.now() +
           SESSION_MS
         );
+
 
       await pool.query(
         `
@@ -1830,6 +1939,7 @@ app.post(
         ]
       );
 
+
       await pool.query(
         `
         UPDATE accounts
@@ -1839,8 +1949,8 @@ app.post(
         [account.id]
       );
 
-      return res.json({
 
+      return res.json({
         success: true,
 
         message:
@@ -1852,7 +1962,6 @@ app.post(
           account.access_key,
 
         user: {
-
           id:
             account.id,
 
@@ -1886,6 +1995,7 @@ app.post(
   }
 );
 
+
 /* =========================================================
    AUTHENTICATED USER
 ========================================================= */
@@ -1898,22 +2008,27 @@ async function getAuthenticatedUser(
     req.headers.authorization ||
     "";
 
+
   if (
     !authorization.startsWith(
       "Bearer "
     )
   ) {
+
     return null;
   }
+
 
   const token =
     authorization
       .slice(7)
       .trim();
 
+
   if (!token) {
     return null;
   }
+
 
   const result =
     await pool.query(
@@ -1936,11 +2051,12 @@ async function getAuthenticatedUser(
       WHERE
         s.token = $1
         AND s.expires_at >
-            CURRENT_TIMESTAMP
+          CURRENT_TIMESTAMP
       LIMIT 1
       `,
       [token]
     );
+
 
   if (
     result.rows.length === 0
@@ -1957,8 +2073,10 @@ async function getAuthenticatedUser(
     return null;
   }
 
+
   return result.rows[0];
 }
+
 
 /* =========================================================
    USER
@@ -1975,6 +2093,7 @@ app.get(
           req
         );
 
+
       if (!user) {
 
         return sendError(
@@ -1984,12 +2103,11 @@ app.get(
         );
       }
 
-      return res.json({
 
+      return res.json({
         success: true,
 
         user: {
-
           id:
             user.id,
 
@@ -2041,6 +2159,7 @@ app.get(
   }
 );
 
+
 /* =========================================================
    LOGOUT
 ========================================================= */
@@ -2055,6 +2174,7 @@ app.post(
         req.headers.authorization ||
         "";
 
+
       if (
         authorization.startsWith(
           "Bearer "
@@ -2065,6 +2185,7 @@ app.post(
           authorization
             .slice(7)
             .trim();
+
 
         if (token) {
 
@@ -2078,8 +2199,8 @@ app.post(
         }
       }
 
-      return res.json({
 
+      return res.json({
         success: true,
 
         message:
@@ -2102,6 +2223,7 @@ app.post(
   }
 );
 
+
 /* =========================================================
    ADMIN ACCESS KEYS
 ========================================================= */
@@ -2121,16 +2243,18 @@ app.get(
         );
       }
 
+
       const providedKey =
         req.headers[
           "x-admin-key"
         ];
 
+
       if (
         typeof providedKey !==
           "string" ||
         providedKey !==
-        ADMIN_KEY
+          ADMIN_KEY
       ) {
 
         return sendError(
@@ -2139,6 +2263,7 @@ app.get(
           "Admin key غير صحيحة."
         );
       }
+
 
       const result =
         await pool.query(
@@ -2158,8 +2283,8 @@ app.get(
           `
         );
 
-      return res.json({
 
+      return res.json({
         success: true,
 
         count:
@@ -2185,6 +2310,7 @@ app.get(
   }
 );
 
+
 /* =========================================================
    SESSION CLEANUP
 ========================================================= */
@@ -2198,9 +2324,10 @@ async function cleanupSessions() {
         `
         DELETE FROM sessions
         WHERE expires_at <=
-              CURRENT_TIMESTAMP
+          CURRENT_TIMESTAMP
         `
       );
+
 
     if (
       result.rowCount > 0
@@ -2221,6 +2348,7 @@ async function cleanupSessions() {
   }
 }
 
+
 /* =========================================================
    404
 ========================================================= */
@@ -2229,7 +2357,6 @@ app.use(
   (req, res) => {
 
     res.status(404).json({
-
       success: false,
 
       message:
@@ -2240,6 +2367,7 @@ app.use(
     });
   }
 );
+
 
 /* =========================================================
    ERROR HANDLER
@@ -2258,23 +2386,26 @@ app.use(
       error
     );
 
+
     if (
       res.headersSent
     ) {
+
       return next(error);
     }
 
-    return res.status(
-      500
-    ).json({
 
-      success: false,
+    return res
+      .status(500)
+      .json({
+        success: false,
 
-      message:
-        "حدث خطأ داخلي في السيرفر."
-    });
+        message:
+          "حدث خطأ داخلي في السيرفر."
+      });
   }
 );
+
 
 /* =========================================================
    START
@@ -2300,7 +2431,9 @@ async function startServer() {
       process.exit(1);
     }
 
+
     await initDatabase();
+
 
     const server =
       app.listen(
@@ -2354,6 +2487,7 @@ async function startServer() {
         }
       );
 
+
     server.on(
       "error",
       (error) => {
@@ -2366,6 +2500,7 @@ async function startServer() {
         process.exit(1);
       }
     );
+
 
     setInterval(
       cleanupSessions,
@@ -2382,6 +2517,7 @@ async function startServer() {
     process.exit(1);
   }
 }
+
 
 /* =========================================================
    SHUTDOWN
@@ -2404,6 +2540,7 @@ async function shutdown() {
   process.exit(0);
 }
 
+
 process.on(
   "SIGTERM",
   shutdown
@@ -2413,6 +2550,7 @@ process.on(
   "SIGINT",
   shutdown
 );
+
 
 /* =========================================================
    START SERVER
