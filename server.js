@@ -374,7 +374,7 @@ function verifyOAuthState(state) {
 }
 
 /* =====================================================
-   DATABASE INIT + MIGRATION
+   DATABASE CHECK
 ===================================================== */
 
 async function initDatabase() {
@@ -385,171 +385,111 @@ async function initDatabase() {
     await client.query("BEGIN");
 
     /* =================================================
-       USERS TABLE
+       ACCOUNTS
+       Existing table is preserved.
     ================================================= */
 
     await client.query(`
-      CREATE TABLE IF NOT EXISTS users (
+      CREATE TABLE IF NOT EXISTS accounts (
         id SERIAL PRIMARY KEY,
 
-        username VARCHAR(24),
+        username VARCHAR(24) NOT NULL UNIQUE,
 
-        username_normalized VARCHAR(24),
-
-        password_hash TEXT,
+        password TEXT,
 
         access_key TEXT,
 
         discord_id TEXT,
 
-        created_at TIMESTAMP
-          DEFAULT CURRENT_TIMESTAMP
+        discord_username TEXT,
+
+        discord_global_name TEXT,
+
+        discord_avatar TEXT,
+
+        auth_provider VARCHAR(20)
+          DEFAULT 'password',
+
+        created_at TIMESTAMPTZ
+          DEFAULT NOW(),
+
+        last_login_at TIMESTAMPTZ
       )
     `);
 
-    /* =================================================
-       ADD MISSING COLUMNS TO OLD USERS TABLE
-    ================================================= */
-
     await client.query(`
-      ALTER TABLE users
-      ADD COLUMN IF NOT EXISTS username VARCHAR(24)
+      ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS password TEXT
     `);
 
     await client.query(`
-      ALTER TABLE users
-      ADD COLUMN IF NOT EXISTS username_normalized VARCHAR(24)
-    `);
-
-    await client.query(`
-      ALTER TABLE users
-      ADD COLUMN IF NOT EXISTS password_hash TEXT
-    `);
-
-    await client.query(`
-      ALTER TABLE users
+      ALTER TABLE accounts
       ADD COLUMN IF NOT EXISTS access_key TEXT
     `);
 
     await client.query(`
-      ALTER TABLE users
+      ALTER TABLE accounts
       ADD COLUMN IF NOT EXISTS discord_id TEXT
     `);
 
     await client.query(`
-      ALTER TABLE users
-      ADD COLUMN IF NOT EXISTS created_at TIMESTAMP
-      DEFAULT CURRENT_TIMESTAMP
+      ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS discord_username TEXT
     `);
-
-    /* =================================================
-       FIX OLD USERNAME NORMALIZED VALUES
-    ================================================= */
 
     await client.query(`
-      UPDATE users
-      SET username_normalized =
-        LOWER(TRIM(username))
-      WHERE
-        username_normalized IS NULL
-        AND username IS NOT NULL
+      ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS discord_global_name TEXT
+    `);
+
+    await client.query(`
+      ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS discord_avatar TEXT
+    `);
+
+    await client.query(`
+      ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(20)
+      DEFAULT 'password'
+    `);
+
+    await client.query(`
+      ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ
+      DEFAULT NOW()
+    `);
+
+    await client.query(`
+      ALTER TABLE accounts
+      ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ
     `);
 
     /* =================================================
-       GENERATE ACCESS KEYS FOR OLD USERS
-    ================================================= */
-
-    const oldUsers =
-      await client.query(`
-        SELECT id
-        FROM users
-        WHERE access_key IS NULL
-      `);
-
-    for (
-      const oldUser
-      of oldUsers.rows
-    ) {
-      let generated = false;
-
-      for (
-        let attempt = 0;
-        attempt < 20;
-        attempt++
-      ) {
-        const key =
-          generateAccessKey();
-
-        const exists =
-          await client.query(
-            `
-            SELECT id
-            FROM users
-            WHERE access_key = $1
-            LIMIT 1
-            `,
-            [key]
-          );
-
-        if (
-          exists.rows.length === 0
-        ) {
-          await client.query(
-            `
-            UPDATE users
-            SET access_key = $1
-            WHERE id = $2
-            `,
-            [
-              key,
-              oldUser.id
-            ]
-          );
-
-          generated = true;
-          break;
-        }
-      }
-
-      if (!generated) {
-        throw new Error(
-          "Unable to generate access key for old user."
-        );
-      }
-    }
-
-    /* =================================================
-       ACCESS KEYS TABLE
+       ACCESS_KEYS
+       IMPORTANT:
+       Existing database uses column "key".
     ================================================= */
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS access_keys (
         id SERIAL PRIMARY KEY,
 
-        access_key TEXT
-          UNIQUE NOT NULL,
-
-        discord_id TEXT,
+        key TEXT UNIQUE NOT NULL,
 
         used BOOLEAN
           NOT NULL DEFAULT FALSE,
 
-        used_by INTEGER,
+        used_by TEXT,
 
-        created_at TIMESTAMP
-          NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        account_id INTEGER,
 
-        used_at TIMESTAMP
+        discord_id TEXT,
+
+        created_at TIMESTAMPTZ
+          DEFAULT NOW(),
+
+        used_at TIMESTAMPTZ
       )
-    `);
-
-    /* =================================================
-       ADD MISSING ACCESS KEY COLUMNS
-    ================================================= */
-
-    await client.query(`
-      ALTER TABLE access_keys
-      ADD COLUMN IF NOT EXISTS discord_id TEXT
     `);
 
     await client.query(`
@@ -560,45 +500,49 @@ async function initDatabase() {
 
     await client.query(`
       ALTER TABLE access_keys
-      ADD COLUMN IF NOT EXISTS used_by INTEGER
+      ADD COLUMN IF NOT EXISTS used_by TEXT
     `);
 
     await client.query(`
       ALTER TABLE access_keys
-      ADD COLUMN IF NOT EXISTS created_at TIMESTAMP
-      DEFAULT CURRENT_TIMESTAMP
+      ADD COLUMN IF NOT EXISTS account_id INTEGER
     `);
 
     await client.query(`
       ALTER TABLE access_keys
-      ADD COLUMN IF NOT EXISTS used_at TIMESTAMP
+      ADD COLUMN IF NOT EXISTS discord_id TEXT
+    `);
+
+    await client.query(`
+      ALTER TABLE access_keys
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ
+      DEFAULT NOW()
+    `);
+
+    await client.query(`
+      ALTER TABLE access_keys
+      ADD COLUMN IF NOT EXISTS used_at TIMESTAMPTZ
     `);
 
     /* =================================================
-       SESSIONS TABLE
+       SESSIONS
+       user_id stores accounts.id
     ================================================= */
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS sessions (
         id SERIAL PRIMARY KEY,
 
-        token TEXT
-          UNIQUE NOT NULL,
+        token TEXT UNIQUE NOT NULL,
 
-        user_id INTEGER
-          NOT NULL,
+        user_id INTEGER NOT NULL,
 
         created_at TIMESTAMP
-          NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          DEFAULT CURRENT_TIMESTAMP,
 
-        expires_at TIMESTAMP
-          NOT NULL
+        expires_at TIMESTAMP NOT NULL
       )
     `);
-
-    /* =================================================
-       OLD SESSIONS MIGRATION
-    ================================================= */
 
     await client.query(`
       ALTER TABLE sessions
@@ -608,44 +552,36 @@ async function initDatabase() {
     await client.query(`
       UPDATE sessions
       SET expires_at =
-        created_at +
-        INTERVAL '30 days'
+        created_at + INTERVAL '30 days'
       WHERE expires_at IS NULL
     `);
 
     /* =================================================
-       UNIQUE INDEXES
+       INDEXES
     ================================================= */
 
     await client.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS
-      idx_users_username_normalized_unique
-      ON users(username_normalized)
-      WHERE username_normalized IS NOT NULL
+      CREATE INDEX IF NOT EXISTS
+      idx_accounts_discord_id
+      ON accounts(discord_id)
     `);
 
     await client.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS
-      idx_users_access_key_unique
-      ON users(access_key)
-      WHERE access_key IS NOT NULL
+      CREATE INDEX IF NOT EXISTS
+      idx_accounts_username
+      ON accounts(username)
     `);
-
-    await client.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS
-      idx_users_discord_id_unique
-      ON users(discord_id)
-      WHERE discord_id IS NOT NULL
-    `);
-
-    /* =================================================
-       NORMAL INDEXES
-    ================================================= */
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS
       idx_access_keys_discord_id
       ON access_keys(discord_id)
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS
+      idx_access_keys_account_id
+      ON access_keys(account_id)
     `);
 
     await client.query(`
@@ -663,11 +599,27 @@ async function initDatabase() {
     await client.query("COMMIT");
 
     console.log(
+      "===================================="
+    );
+
+    console.log(
       "✅ PostgreSQL database جاهزة"
     );
 
     console.log(
-      "✅ Database migration completed"
+      "✅ accounts = primary users table"
+    );
+
+    console.log(
+      "✅ access_keys = existing key table"
+    );
+
+    console.log(
+      "✅ sessions = accounts sessions"
+    );
+
+    console.log(
+      "===================================="
     );
   } catch (error) {
     await client.query("ROLLBACK");
@@ -691,7 +643,8 @@ app.get("/", (req, res) => {
   res.json({
     success: true,
     name: "N10 SERVER MENA",
-    status: "online"
+    status: "online",
+    databaseMode: "accounts"
   });
 });
 
@@ -795,22 +748,23 @@ app.get(
   async (req, res) => {
     try {
       const code =
-        typeof req.query.code ===
-        "string"
+        typeof req.query.code === "string"
           ? req.query.code
           : "";
 
       const state =
-        typeof req.query.state ===
-        "string"
+        typeof req.query.state === "string"
           ? req.query.state
           : "";
 
       const discordError =
-        typeof req.query.error ===
-        "string"
+        typeof req.query.error === "string"
           ? req.query.error
           : "";
+
+      /* =================================================
+         DISCORD CANCEL
+      ================================================= */
 
       if (discordError) {
         return res.redirect(
@@ -821,9 +775,11 @@ app.get(
         );
       }
 
-      if (
-        !verifyOAuthState(state)
-      ) {
+      /* =================================================
+         STATE
+      ================================================= */
+
+      if (!verifyOAuthState(state)) {
         return res.redirect(
           frontendRedirect({
             discordError:
@@ -842,7 +798,7 @@ app.get(
       }
 
       /* =================================================
-         DISCORD TOKEN
+         TOKEN
       ================================================= */
 
       const tokenResponse =
@@ -931,27 +887,53 @@ app.get(
       }
 
       const discordId =
-        String(
-          discordUser.id
-        );
+        String(discordUser.id);
+
+      const discordUsername =
+        discordUser.username ||
+        "";
+
+      const discordGlobalName =
+        discordUser.global_name ||
+        "";
+
+      const discordAvatar =
+        discordUser.avatar
+          ? `https://cdn.discordapp.com/avatars/${discordId}/${discordUser.avatar}.png`
+          : "";
 
       console.log(
-        "✅ Discord user:",
+        "===================================="
+      );
+
+      console.log(
+        "✅ Discord OAuth successful"
+      );
+
+      console.log(
+        "Discord ID:",
         discordId
       );
 
+      console.log(
+        "Discord Username:",
+        discordUsername
+      );
+
       /* =================================================
-         EXISTING USER
+         EXISTING ACCOUNT
       ================================================= */
 
-      const existingUser =
+      const existingAccount =
         await pool.query(
           `
           SELECT
             id,
             username,
-            access_key
-          FROM users
+            access_key,
+            discord_id,
+            auth_provider
+          FROM accounts
           WHERE discord_id = $1
           LIMIT 1
           `,
@@ -959,28 +941,102 @@ app.get(
         );
 
       if (
-        existingUser.rows.length > 0
+        existingAccount.rows.length > 0
       ) {
-        const user =
-          existingUser.rows[0];
+        const account =
+          existingAccount.rows[0];
+
+        /* ===============================================
+           UPDATE DISCORD DATA
+        =============================================== */
+
+        await pool.query(
+          `
+          UPDATE accounts
+          SET
+            discord_username = $1,
+            discord_global_name = $2,
+            discord_avatar = $3,
+            last_login_at = NOW()
+          WHERE id = $4
+          `,
+          [
+            discordUsername,
+            discordGlobalName,
+            discordAvatar,
+            account.id
+          ]
+        );
+
+        /* ===============================================
+           CREATE SESSION
+        =============================================== */
+
+        const sessionToken =
+          generateSessionToken();
+
+        const expiresAt =
+          new Date(
+            Date.now() +
+            SESSION_MS
+          );
+
+        await pool.query(
+          `
+          INSERT INTO sessions
+            (
+              token,
+              user_id,
+              created_at,
+              expires_at
+            )
+          VALUES
+            ($1, $2, CURRENT_TIMESTAMP, $3)
+          `,
+          [
+            sessionToken,
+            account.id,
+            expiresAt
+          ]
+        );
+
+        console.log(
+          "✅ Existing account session created:",
+          account.username
+        );
+
+        /*
+         * Send BOTH sessionToken and accessKey.
+         * This makes the callback compatible
+         * with the current frontend.
+         */
 
         return res.redirect(
           frontendRedirect({
+            success: "true",
+            sessionToken:
+              sessionToken,
             accessKey:
-              user.access_key
+              account.access_key || "",
+            username:
+              account.username
           })
         );
       }
 
       /* =================================================
-         EXISTING UNUSED KEY
+         FIND UNUSED KEY FOR THIS DISCORD
       ================================================= */
 
-      const existingKey =
+      const keyResult =
         await pool.query(
           `
           SELECT
-            access_key
+            id,
+            key,
+            discord_id,
+            used,
+            account_id
           FROM access_keys
           WHERE discord_id = $1
             AND used = FALSE
@@ -990,74 +1046,52 @@ app.get(
           [discordId]
         );
 
-      let accessKey =
-        existingKey.rows.length > 0
-          ? existingKey.rows[0].access_key
+      let keyRow =
+        keyResult.rows.length > 0
+          ? keyResult.rows[0]
           : null;
 
       /* =================================================
-         GENERATE KEY
+         NO UNUSED KEY
       ================================================= */
 
-      if (!accessKey) {
-        for (
-          let i = 0;
-          i < 20;
-          i++
-        ) {
-          const candidate =
-            generateAccessKey();
+      if (!keyRow) {
+        console.log(
+          "⚠️ No unused access key for Discord:",
+          discordId
+        );
 
-          try {
-            await pool.query(
-              `
-              INSERT INTO access_keys
-                (
-                  access_key,
-                  discord_id,
-                  used
-                )
-              VALUES
-                ($1, $2, FALSE)
-              `,
-              [
-                candidate,
-                discordId
-              ]
-            );
-
-            accessKey =
-              candidate;
-
-            break;
-          } catch (error) {
-            if (
-              error.code === "23505"
-            ) {
-              continue;
-            }
-
-            throw error;
-          }
-        }
-      }
-
-      if (!accessKey) {
         return res.redirect(
           frontendRedirect({
             discordError:
-              "تعذر إنشاء Access Key."
+              "هذا Discord غير مرتبط بـ Access Key صالح. يجب إنشاء مفتاح جديد أولاً."
           })
         );
       }
 
       /* =================================================
-         REDIRECT FRONTEND
+         IMPORTANT:
+         DISCORD USER IS NOT REGISTERED YET
+
+         We DO NOT create an account here.
+         The key is passed to frontend so
+         registration can create the account.
       ================================================= */
+
+      console.log(
+        "✅ Unused access key found:",
+        keyRow.key
+      );
 
       return res.redirect(
         frontendRedirect({
-          accessKey
+          success: "true",
+          accessKey:
+            keyRow.key,
+          discordId:
+            discordId,
+          discordUsername:
+            discordUsername
         })
       );
     } catch (error) {
@@ -1161,7 +1195,7 @@ app.post(
       await client.query("BEGIN");
 
       /* =================================================
-         LOCK KEY
+         LOCK ACCESS KEY
       ================================================= */
 
       const keyResult =
@@ -1169,11 +1203,12 @@ app.post(
           `
           SELECT
             id,
-            access_key,
+            key,
             discord_id,
-            used
+            used,
+            account_id
           FROM access_keys
-          WHERE access_key = $1
+          WHERE key = $1
           FOR UPDATE
           `,
           [key]
@@ -1182,7 +1217,9 @@ app.post(
       if (
         keyResult.rows.length === 0
       ) {
-        await client.query("ROLLBACK");
+        await client.query(
+          "ROLLBACK"
+        );
 
         return sendError(
           res,
@@ -1194,9 +1231,19 @@ app.post(
       const keyRow =
         keyResult.rows[0];
 
-      if (keyRow.used) {
-        await client.query("ROLLBACK");
+      /* =================================================
+         USED KEY
+      ================================================= */
 
+      if (keyRow.used) {
+        await client.query(
+          "ROLLBACK"
+        );
+
+        /*
+         * Existing keys in your database are already
+         * used by existing accounts.
+         */
         return sendError(
           res,
           400,
@@ -1205,15 +1252,15 @@ app.post(
       }
 
       /* =================================================
-         USERNAME
+         USERNAME CHECK
       ================================================= */
 
       const usernameResult =
         await client.query(
           `
           SELECT id
-          FROM users
-          WHERE username_normalized = $1
+          FROM accounts
+          WHERE LOWER(username) = $1
           LIMIT 1
           `,
           [normalizedName]
@@ -1222,7 +1269,9 @@ app.post(
       if (
         usernameResult.rows.length > 0
       ) {
-        await client.query("ROLLBACK");
+        await client.query(
+          "ROLLBACK"
+        );
 
         return sendError(
           res,
@@ -1241,23 +1290,36 @@ app.post(
           12
         );
 
+      /*
+       * For normal registration we store
+       * the bcrypt hash in accounts.password.
+       */
+
       /* =================================================
-         CREATE USER
+         CREATE ACCOUNT
       ================================================= */
 
-      const userResult =
+      const accountResult =
         await client.query(
           `
-          INSERT INTO users
+          INSERT INTO accounts
             (
               username,
-              username_normalized,
-              password_hash,
+              password,
               access_key,
-              discord_id
+              discord_id,
+              auth_provider,
+              created_at
             )
           VALUES
-            ($1, $2, $3, $4, $5)
+            (
+              $1,
+              $2,
+              $3,
+              $4,
+              $5,
+              NOW()
+            )
           RETURNING
             id,
             username,
@@ -1267,18 +1329,20 @@ app.post(
           `,
           [
             cleanName,
-            normalizedName,
             passwordHash,
-            keyRow.access_key,
+            keyRow.key,
+            keyRow.discord_id,
             keyRow.discord_id
+              ? "discord"
+              : "password"
           ]
         );
 
-      const user =
-        userResult.rows[0];
+      const account =
+        accountResult.rows[0];
 
       /* =================================================
-         MARK KEY USED
+         MARK ACCESS KEY USED
       ================================================= */
 
       await client.query(
@@ -1287,11 +1351,13 @@ app.post(
         SET
           used = TRUE,
           used_by = $1,
+          account_id = $2,
           used_at = CURRENT_TIMESTAMP
-        WHERE id = $2
+        WHERE id = $3
         `,
         [
-          user.id,
+          account.username,
+          account.id,
           keyRow.id
         ]
       );
@@ -1315,19 +1381,32 @@ app.post(
           (
             token,
             user_id,
+            created_at,
             expires_at
           )
         VALUES
-          ($1, $2, $3)
+          (
+            $1,
+            $2,
+            CURRENT_TIMESTAMP,
+            $3
+          )
         `,
         [
           sessionToken,
-          user.id,
+          account.id,
           expiresAt
         ]
       );
 
-      await client.query("COMMIT");
+      await client.query(
+        "COMMIT"
+      );
+
+      console.log(
+        "✅ Account created:",
+        account.username
+      );
 
       return res.status(201).json({
         success: true,
@@ -1338,22 +1417,29 @@ app.post(
         sessionToken,
 
         accessKey:
-          user.access_key,
+          account.access_key,
 
         user: {
-          id: user.id,
+          id:
+            account.id,
+
           username:
-            user.username,
+            account.username,
+
           accessKey:
-            user.access_key,
+            account.access_key,
+
           discordId:
-            user.discord_id,
+            account.discord_id,
+
           createdAt:
-            user.created_at
+            account.created_at
         }
       });
     } catch (error) {
-      await client.query("ROLLBACK");
+      await client.query(
+        "ROLLBACK"
+      );
 
       console.error(
         "❌ Register error:",
@@ -1414,12 +1500,12 @@ app.post(
           SELECT
             id,
             username,
-            password_hash,
+            password,
             access_key,
             discord_id,
             created_at
-          FROM users
-          WHERE username_normalized = $1
+          FROM accounts
+          WHERE LOWER(username) = $1
           LIMIT 1
           `,
           [normalizedName]
@@ -1435,23 +1521,23 @@ app.post(
         );
       }
 
-      const user =
+      const account =
         result.rows[0];
 
       if (
-        !user.password_hash
+        !account.password
       ) {
         return sendError(
           res,
-          500,
-          "الحساب القديم يحتاج إلى إعادة التسجيل."
+          401,
+          "هذا الحساب لا يملك كلمة مرور."
         );
       }
 
       const passwordOK =
         await bcrypt.compare(
           password,
-          user.password_hash
+          account.password
         );
 
       if (!passwordOK) {
@@ -1477,16 +1563,31 @@ app.post(
           (
             token,
             user_id,
+            created_at,
             expires_at
           )
         VALUES
-          ($1, $2, $3)
+          (
+            $1,
+            $2,
+            CURRENT_TIMESTAMP,
+            $3
+          )
         `,
         [
           sessionToken,
-          user.id,
+          account.id,
           expiresAt
         ]
+      );
+
+      await pool.query(
+        `
+        UPDATE accounts
+        SET last_login_at = NOW()
+        WHERE id = $1
+        `,
+        [account.id]
       );
 
       return res.json({
@@ -1498,18 +1599,23 @@ app.post(
         sessionToken,
 
         accessKey:
-          user.access_key,
+          account.access_key,
 
         user: {
-          id: user.id,
+          id:
+            account.id,
+
           username:
-            user.username,
+            account.username,
+
           accessKey:
-            user.access_key,
+            account.access_key,
+
           discordId:
-            user.discord_id,
+            account.discord_id,
+
           createdAt:
-            user.created_at
+            account.created_at
         }
       });
     } catch (error) {
@@ -1556,15 +1662,21 @@ async function getAuthenticatedUser(req) {
     await pool.query(
       `
       SELECT
-        u.id,
-        u.username,
-        u.access_key,
-        u.discord_id,
-        u.created_at
+        a.id,
+        a.username,
+        a.access_key,
+        a.discord_id,
+        a.discord_username,
+        a.discord_global_name,
+        a.discord_avatar,
+        a.auth_provider,
+        a.created_at,
+        a.last_login_at
       FROM sessions s
-      INNER JOIN users u
-        ON u.id = s.user_id
-      WHERE s.token = $1
+      INNER JOIN accounts a
+        ON a.id = s.user_id
+      WHERE
+        s.token = $1
         AND s.expires_at > CURRENT_TIMESTAMP
       LIMIT 1
       `,
@@ -1613,15 +1725,35 @@ app.get(
         success: true,
 
         user: {
-          id: user.id,
+          id:
+            user.id,
+
           username:
             user.username,
+
           accessKey:
             user.access_key,
+
           discordId:
             user.discord_id,
+
+          discordUsername:
+            user.discord_username,
+
+          discordGlobalName:
+            user.discord_global_name,
+
+          discordAvatar:
+            user.discord_avatar,
+
+          authProvider:
+            user.auth_provider,
+
           createdAt:
-            user.created_at
+            user.created_at,
+
+          lastLoginAt:
+            user.last_login_at
         }
       });
     } catch (error) {
@@ -1721,7 +1853,8 @@ app.use(
       success: false,
       message:
         "المسار غير موجود.",
-      path: req.path
+      path:
+        req.path
     });
   }
 );
@@ -1760,7 +1893,9 @@ app.use(
 
 async function startServer() {
   try {
-    if (missing.length > 0) {
+    if (
+      missing.length > 0
+    ) {
       console.error(
         "❌ لا يمكن تشغيل السيرفر."
       );
@@ -1793,6 +1928,10 @@ async function startServer() {
 
           console.log(
             `🔗 Discord Callback: ${DISCORD_REDIRECT_URI}`
+          );
+
+          console.log(
+            "🗄️ Database: accounts"
           );
 
           console.log(
