@@ -16,6 +16,16 @@ const app = express();
 
 const PORT = Number(process.env.PORT || 3000);
 
+const FRONTEND_URL = (
+  process.env.FRONTEND_URL ||
+  "https://siko6476.github.io/N10-SERVER-MENA"
+).replace(/\/+$/, "");
+
+const FRONTEND_ORIGIN = (
+  process.env.FRONTEND_ORIGIN ||
+  "https://siko6476.github.io"
+).replace(/\/+$/, "");
+
 const DATABASE_URL = process.env.DATABASE_URL || "";
 
 const DISCORD_CLIENT_ID =
@@ -31,22 +41,15 @@ const DISCORD_REDIRECT_URI =
 const OAUTH_STATE_SECRET =
   process.env.OAUTH_STATE_SECRET || "";
 
-const FRONTEND_URL = (
-  process.env.FRONTEND_URL ||
-  "https://siko6476.github.io/N10-SERVER-MENA"
-).replace(/\/+$/, "");
-
-const FRONTEND_ORIGIN = (
-  process.env.FRONTEND_ORIGIN ||
-  "https://siko6476.github.io"
-).replace(/\/+$/, "");
-
 const SESSION_MS =
   30 * 24 * 60 * 60 * 1000;
 
+const OAUTH_STATE_MS =
+  10 * 60 * 1000;
+
 
 /* =========================================================
-   ENVIRONMENT CHECK
+   ENV CHECK
 ========================================================= */
 
 const missing = [];
@@ -99,7 +102,6 @@ const pool = new Pool({
 
   connectionTimeoutMillis: 10000
 });
-
 
 pool.on("error", (error) => {
   console.error(
@@ -182,20 +184,22 @@ function sendError(
 }
 
 
-function generateSessionToken() {
+function randomHex(bytes = 32) {
   return crypto
-    .randomBytes(48)
+    .randomBytes(bytes)
     .toString("hex");
+}
+
+
+function generateSessionToken() {
+  return randomHex(48);
 }
 
 
 function generateAccessKey() {
   return (
     "N10-" +
-    crypto
-      .randomBytes(18)
-      .toString("hex")
-      .toUpperCase()
+    randomHex(18).toUpperCase()
   );
 }
 
@@ -209,6 +213,10 @@ function cleanUsername(name) {
     .slice(0, 24) || "DiscordUser";
 }
 
+
+/* =========================================================
+   UNIQUE USERNAME
+========================================================= */
 
 async function uniqueUsername(base) {
 
@@ -243,12 +251,15 @@ async function uniqueUsername(base) {
     username =
       cleanBase.slice(
         0,
-        24 - suffix.length
+        Math.max(
+          1,
+          24 - suffix.length
+        )
       ) + suffix;
   }
 
   throw new Error(
-    "Unable to generate unique username"
+    "Could not generate unique username"
   );
 }
 
@@ -300,9 +311,7 @@ function createOAuthState() {
     Date.now().toString();
 
   const random =
-    crypto
-      .randomBytes(32)
-      .toString("hex");
+    randomHex(32);
 
   const payload =
     `${timestamp}.${random}`;
@@ -347,6 +356,9 @@ function verifyOAuthState(state) {
   if (
     !timestamp ||
     !random ||
+    !/^[a-f0-9]{64}$/.test(
+      random
+    ) ||
     !/^[a-f0-9]{64}$/.test(
       signature
     )
@@ -403,7 +415,89 @@ function verifyOAuthState(state) {
 
   return (
     age >= 0 &&
-    age <= 10 * 60 * 1000
+    age <= OAUTH_STATE_MS
+  );
+}
+
+
+/* =========================================================
+   COOKIE HELPERS
+========================================================= */
+
+function parseCookies(req) {
+
+  const header =
+    req.headers.cookie || "";
+
+  const cookies = {};
+
+  for (
+    const part
+    of header.split(";")
+  ) {
+
+    const index =
+      part.indexOf("=");
+
+    if (index === -1) {
+      continue;
+    }
+
+    const key =
+      part
+        .slice(0, index)
+        .trim();
+
+    const value =
+      part
+        .slice(index + 1)
+        .trim();
+
+    cookies[key] =
+      decodeURIComponent(value);
+  }
+
+  return cookies;
+}
+
+
+function setOAuthCookie(
+  res,
+  state
+) {
+
+  const cookie =
+    [
+      `n10_oauth_state=${encodeURIComponent(state)}`,
+      "Path=/auth/discord",
+      "HttpOnly",
+      "Secure",
+      "SameSite=Lax",
+      "Max-Age=600"
+    ].join("; ");
+
+  res.setHeader(
+    "Set-Cookie",
+    cookie
+  );
+}
+
+
+function clearOAuthCookie(res) {
+
+  const cookie =
+    [
+      "n10_oauth_state=",
+      "Path=/auth/discord",
+      "HttpOnly",
+      "Secure",
+      "SameSite=Lax",
+      "Max-Age=0"
+    ].join("; ");
+
+  res.setHeader(
+    "Set-Cookie",
+    cookie
   );
 }
 
@@ -419,8 +513,8 @@ app.get("/", (req, res) => {
   res.json({
     success: true,
     name: "N10 SERVER MENA",
-    version: "1.0.0",
     status: "online",
+    version: "1.0.0",
     discord: true,
     database: "PostgreSQL"
   });
@@ -441,7 +535,7 @@ app.get(
         "SELECT 1"
       );
 
-      return res.json({
+      res.json({
         success: true,
         status: "online",
         database: "connected"
@@ -454,10 +548,10 @@ app.get(
         error
       );
 
-      return res.status(500).json({
+      res.status(500).json({
         success: false,
         status: "online",
-        database: "offline"
+        database: "disconnected"
       });
     }
   }
@@ -473,6 +567,8 @@ app.get(
   (req, res) => {
 
     try {
+
+      noCache(res);
 
       if (
         !DISCORD_CLIENT_ID ||
@@ -491,11 +587,13 @@ app.get(
         createOAuthState();
 
       /*
-       * IMPORTANT:
-       * The redirect URI here MUST be exactly
-       * the same as the one registered in
-       * Discord Developer Portal.
+       * Save state in secure cookie
        */
+
+      setOAuthCookie(
+        res,
+        state
+      );
 
       const params =
         new URLSearchParams({
@@ -514,17 +612,18 @@ app.get(
           state
         });
 
-      noCache(res);
+      const discordUrl =
+        "https://discord.com/oauth2/authorize?" +
+        params.toString();
 
       return res.redirect(
-        "https://discord.com/oauth2/authorize?" +
-        params.toString()
+        discordUrl
       );
 
     } catch (error) {
 
       console.error(
-        "Discord Start Error:",
+        "Discord Login Start Error:",
         error
       );
 
@@ -546,13 +645,12 @@ app.get(
   "/auth/discord/callback",
   async (req, res) => {
 
+    const client =
+      await pool.connect();
+
     try {
 
       noCache(res);
-
-      /* -----------------------------------------
-         Get OAuth parameters
-      ----------------------------------------- */
 
       const code =
         typeof req.query.code === "string"
@@ -569,12 +667,20 @@ app.get(
           ? req.query.error
           : "";
 
+      const cookies =
+        parseCookies(req);
 
-      /* -----------------------------------------
-         User cancelled Discord login
-      ----------------------------------------- */
+      const savedState =
+        cookies.n10_oauth_state || "";
+
+
+      /* =====================================
+         CANCELLED
+      ===================================== */
 
       if (discordError) {
+
+        clearOAuthCookie(res);
 
         return res.redirect(
           frontendRedirect({
@@ -585,13 +691,18 @@ app.get(
       }
 
 
-      /* -----------------------------------------
-         Verify state
-      ----------------------------------------- */
+      /* =====================================
+         CHECK STATE
+      ===================================== */
 
       if (
+        !state ||
+        !savedState ||
+        state !== savedState ||
         !verifyOAuthState(state)
       ) {
+
+        clearOAuthCookie(res);
 
         return res.redirect(
           frontendRedirect({
@@ -601,10 +712,12 @@ app.get(
         );
       }
 
+      clearOAuthCookie(res);
 
-      /* -----------------------------------------
-         Check code
-      ----------------------------------------- */
+
+      /* =====================================
+         CHECK CODE
+      ===================================== */
 
       if (!code) {
 
@@ -617,9 +730,9 @@ app.get(
       }
 
 
-      /* =================================================
-         EXCHANGE DISCORD CODE
-      ================================================= */
+      /* =====================================
+         EXCHANGE CODE
+      ===================================== */
 
       const tokenResponse =
         await fetch(
@@ -634,7 +747,6 @@ app.get(
 
             body:
               new URLSearchParams({
-
                 client_id:
                   DISCORD_CLIENT_ID,
 
@@ -648,15 +760,12 @@ app.get(
 
                 redirect_uri:
                   DISCORD_REDIRECT_URI
-
               }).toString()
           }
         );
 
-
       const tokenData =
         await tokenResponse.json();
-
 
       if (
         !tokenResponse.ok ||
@@ -671,22 +780,20 @@ app.get(
         return res.redirect(
           frontendRedirect({
             discordError:
-              "فشل تسجيل الدخول عبر Discord."
+              "فشل تسجيل الدخول إلى Discord."
           })
         );
       }
 
 
-      /* =================================================
+      /* =====================================
          GET DISCORD USER
-      ================================================= */
+      ===================================== */
 
       const userResponse =
         await fetch(
           "https://discord.com/api/v10/users/@me",
           {
-            method: "GET",
-
             headers: {
               Authorization:
                 `Bearer ${tokenData.access_token}`
@@ -694,10 +801,8 @@ app.get(
           }
         );
 
-
       const discordUser =
         await userResponse.json();
-
 
       if (
         !userResponse.ok ||
@@ -712,15 +817,15 @@ app.get(
         return res.redirect(
           frontendRedirect({
             discordError:
-              "تعذر الحصول على بيانات Discord."
+              "تعذر الحصول على حساب Discord."
           })
         );
       }
 
 
-      /* =================================================
+      /* =====================================
          DISCORD DATA
-      ================================================= */
+      ===================================== */
 
       const discordId =
         String(
@@ -744,27 +849,38 @@ app.get(
 
 
       console.log(
-        "Discord OAuth SUCCESS:",
+        "Discord OAuth:",
         discordUsername,
         discordId
       );
 
 
-      /* =================================================
+      /* =====================================
+         START DATABASE TRANSACTION
+      ===================================== */
+
+      await client.query(
+        "BEGIN"
+      );
+
+
+      /* =====================================
          FIND ACCOUNT
-      ================================================= */
+      ===================================== */
 
       const accountResult =
-        await pool.query(
+        await client.query(
           `
           SELECT
             id,
             username,
+            password,
             access_key,
             discord_id
           FROM accounts
           WHERE discord_id = $1
           LIMIT 1
+          FOR UPDATE
           `,
           [discordId]
         );
@@ -774,9 +890,9 @@ app.get(
       let accessKey;
 
 
-      /* =================================================
+      /* =====================================
          EXISTING ACCOUNT
-      ================================================= */
+      ===================================== */
 
       if (
         accountResult.rows.length > 0
@@ -789,20 +905,41 @@ app.get(
           account.access_key || null;
 
 
-        /* -----------------------------------------
-           Create missing access key
-        ----------------------------------------- */
+        /* Update Discord information */
+
+        await client.query(
+          `
+          UPDATE accounts
+          SET
+            discord_username = $1,
+            discord_global_name = $2,
+            discord_avatar = $3,
+            auth_provider = 'discord',
+            last_login_at = NOW()
+          WHERE id = $4
+          `,
+          [
+            discordUsername,
+            discordGlobalName,
+            discordAvatar,
+            account.id
+          ]
+        );
+
+
+        /* =================================
+           CREATE ACCESS KEY IF MISSING
+        ================================= */
 
         if (!accessKey) {
 
           accessKey =
             generateAccessKey();
 
-          await pool.query(
+          await client.query(
             `
             UPDATE accounts
-            SET
-              access_key = $1
+            SET access_key = $1
             WHERE id = $2
             `,
             [
@@ -810,11 +947,30 @@ app.get(
               account.id
             ]
           );
+        }
 
 
-          /* Save key in access_keys */
+        /* =================================
+           MAKE SURE ACCESS KEY EXISTS
+           IN access_keys
+        ================================= */
 
-          await pool.query(
+        const keyResult =
+          await client.query(
+            `
+            SELECT id
+            FROM access_keys
+            WHERE key = $1
+            LIMIT 1
+            `,
+            [accessKey]
+          );
+
+        if (
+          keyResult.rows.length === 0
+        ) {
+
+          await client.query(
             `
             INSERT INTO access_keys
             (
@@ -842,37 +998,12 @@ app.get(
             ]
           );
         }
-
-
-        /* -----------------------------------------
-           Update Discord information
-        ----------------------------------------- */
-
-        await pool.query(
-          `
-          UPDATE accounts
-          SET
-            discord_username = $1,
-            discord_global_name = $2,
-            discord_avatar = $3,
-            auth_provider = 'discord',
-            last_login_at = NOW()
-          WHERE id = $4
-          `,
-          [
-            discordUsername,
-            discordGlobalName,
-            discordAvatar,
-            account.id
-          ]
-        );
-
       }
 
 
-      /* =================================================
+      /* =====================================
          NEW ACCOUNT
-      ================================================= */
+      ===================================== */
 
       else {
 
@@ -881,14 +1012,8 @@ app.get(
             discordUsername
           );
 
-
-        /* Random password */
-
         const randomPassword =
-          crypto
-            .randomBytes(32)
-            .toString("hex");
-
+          randomHex(32);
 
         const passwordHash =
           await bcrypt.hash(
@@ -896,19 +1021,16 @@ app.get(
             12
           );
 
-
-        /* New access key */
-
         accessKey =
           generateAccessKey();
 
 
-        /* -----------------------------------------
-           Create account
-        ----------------------------------------- */
+        /* =================================
+           CREATE ACCOUNT
+        ================================= */
 
         const insertResult =
-          await pool.query(
+          await client.query(
             `
             INSERT INTO accounts
             (
@@ -953,16 +1075,15 @@ app.get(
             ]
           );
 
-
         account =
           insertResult.rows[0];
 
 
-        /* -----------------------------------------
-           Save access key
-        ----------------------------------------- */
+        /* =================================
+           CREATE ACCESS KEY
+        ================================= */
 
-        await pool.query(
+        await client.query(
           `
           INSERT INTO access_keys
           (
@@ -992,13 +1113,12 @@ app.get(
       }
 
 
-      /* =================================================
+      /* =====================================
          CREATE SESSION
-      ================================================= */
+      ===================================== */
 
       const sessionToken =
         generateSessionToken();
-
 
       const expiresAt =
         new Date(
@@ -1006,7 +1126,7 @@ app.get(
         );
 
 
-      await pool.query(
+      await client.query(
         `
         INSERT INTO sessions
         (
@@ -1031,15 +1151,24 @@ app.get(
       );
 
 
-      /* =================================================
-         SUCCESS
-      ================================================= */
+      /* =====================================
+         COMMIT
+      ===================================== */
+
+      await client.query(
+        "COMMIT"
+      );
+
 
       console.log(
-        "N10 LOGIN SUCCESS:",
+        "LOGIN SUCCESS:",
         account.username
       );
 
+
+      /* =====================================
+         SUCCESS
+      ===================================== */
 
       return res.redirect(
         frontendRedirect({
@@ -1051,10 +1180,18 @@ app.get(
 
     } catch (error) {
 
+      try {
+        await client.query(
+          "ROLLBACK"
+        );
+      } catch (_) {}
+
       console.error(
-        "Discord Callback Error:",
+        "Discord callback error:",
         error
       );
+
+      clearOAuthCookie(res);
 
       return res.redirect(
         frontendRedirect({
@@ -1062,6 +1199,10 @@ app.get(
             "حدث خطأ في السيرفر أثناء تسجيل الدخول."
         })
       );
+
+    } finally {
+
+      client.release();
     }
   }
 );
@@ -1076,7 +1217,7 @@ app.use(
 
     noCache(res);
 
-    return res.status(404).json({
+    res.status(404).json({
       success: false,
       message: "Route not found"
     });
@@ -1100,7 +1241,7 @@ app.use(
       return next(error);
     }
 
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
       message: "Internal server error"
     });
@@ -1118,7 +1259,11 @@ app.listen(
   () => {
 
     console.log(
-      `N10 Backend running on port ${PORT}`
+      "======================================"
+    );
+
+    console.log(
+      `N10 SERVER MENA running on port ${PORT}`
     );
 
     console.log(
@@ -1127,6 +1272,18 @@ app.listen(
 
     console.log(
       `Discord Redirect: ${DISCORD_REDIRECT_URI}`
+    );
+
+    console.log(
+      "PostgreSQL: configured"
+    );
+
+    console.log(
+      "Discord OAuth: configured"
+    );
+
+    console.log(
+      "======================================"
     );
   }
 );
