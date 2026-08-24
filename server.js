@@ -2,10 +2,11 @@
 
 /*
 ===========================================================
- N10 SERVER
- Express + PostgreSQL
- Register / Login / JWT / Access Keys
+ N10 SERVER - FIXED VERSION
+ Express + PostgreSQL + JWT + Discord OAuth
+ Register / Login / Access Key
  Duplicate Discord ID protection
+ Render compatible
 ===========================================================
 */
 
@@ -16,6 +17,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 const { Pool } = require("pg");
 
 /* =========================================================
@@ -30,12 +32,27 @@ const DATABASE_URL = process.env.DATABASE_URL;
 
 const JWT_SECRET =
   process.env.JWT_SECRET ||
-  "CHANGE_THIS_SECRET_IN_RENDER";
+  "N10_CHANGE_THIS_SECRET_2026";
 
-const NODE_ENV = process.env.NODE_ENV || "production";
+const NODE_ENV =
+  process.env.NODE_ENV || "production";
+
+const FRONTEND_URL =
+  process.env.FRONTEND_URL ||
+  "https://siko6476.github.io/N10-SERVER-MENA";
+
+const DISCORD_CLIENT_ID =
+  process.env.DISCORD_CLIENT_ID || "";
+
+const DISCORD_CLIENT_SECRET =
+  process.env.DISCORD_CLIENT_SECRET || "";
+
+const DISCORD_REDIRECT_URI =
+  process.env.DISCORD_REDIRECT_URI ||
+  "";
 
 if (!DATABASE_URL) {
-  console.error("❌ DATABASE_URL is missing.");
+  console.error("❌ DATABASE_URL غير موجود في Render.");
   process.exit(1);
 }
 
@@ -60,10 +77,9 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000,
 });
 
-/* PostgreSQL connection errors must NEVER crash the server. */
-pool.on("error", (err) => {
-  console.error("❌ Unexpected PostgreSQL pool error:");
-  console.error(err);
+pool.on("error", (error) => {
+  console.error("❌ PostgreSQL pool error:");
+  console.error(error);
 });
 
 /* =========================================================
@@ -82,6 +98,7 @@ app.use(
   cors({
     origin: true,
     credentials: true,
+
     methods: [
       "GET",
       "POST",
@@ -90,6 +107,7 @@ app.use(
       "DELETE",
       "OPTIONS",
     ],
+
     allowedHeaders: [
       "Content-Type",
       "Authorization",
@@ -98,15 +116,28 @@ app.use(
   })
 );
 
-app.use(express.json({ limit: "1mb" }));
-app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+app.use(
+  express.json({
+    limit: "2mb",
+  })
+);
+
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: "2mb",
+  })
+);
 
 /* =========================================================
    HELPERS
 ========================================================= */
 
 function cleanString(value) {
-  if (value === undefined || value === null) {
+  if (
+    value === undefined ||
+    value === null
+  ) {
     return "";
   }
 
@@ -114,15 +145,11 @@ function cleanString(value) {
 }
 
 function normalizeDiscordId(value) {
-  return cleanString(value).replace(/\s+/g, "");
+  return cleanString(value)
+    .replace(/\s+/g, "");
 }
 
 function isValidDiscordId(id) {
-  /*
-   Discord snowflakes are numeric strings.
-   We accept 15-25 digits to avoid unnecessarily
-   rejecting valid IDs.
-  */
   return /^\d{15,25}$/.test(id);
 }
 
@@ -134,90 +161,131 @@ function isValidPassword(password) {
   );
 }
 
+function publicAccount(account) {
+  return {
+    id: account.id,
+    discord_id: account.discord_id,
+    username: account.username || null,
+    access_key: account.access_key || null,
+    created_at: account.created_at,
+    updated_at: account.updated_at,
+  };
+}
+
+/* =========================================================
+   JWT
+========================================================= */
+
 function createToken(account) {
   return jwt.sign(
     {
       sub: String(account.id),
-      discord_id: String(account.discord_id),
+
+      discord_id: String(
+        account.discord_id
+      ),
     },
+
     JWT_SECRET,
+
     {
       expiresIn: "30d",
     }
   );
 }
 
-function publicAccount(account) {
-  return {
-    id: account.id,
-    discord_id: account.discord_id,
-    username: account.username || null,
-    created_at: account.created_at,
-    updated_at: account.updated_at,
-  };
-}
-
 function getBearerToken(req) {
-  const header = req.headers.authorization;
+  const header =
+    req.headers.authorization;
 
   if (!header) {
     return null;
   }
 
-  if (!header.toLowerCase().startsWith("bearer ")) {
+  if (
+    !header
+      .toLowerCase()
+      .startsWith("bearer ")
+  ) {
     return null;
   }
 
-  return header.slice(7).trim();
+  return header
+    .slice(7)
+    .trim();
 }
 
-async function authenticate(req, res, next) {
+/* =========================================================
+   AUTHENTICATION
+========================================================= */
+
+async function authenticate(
+  req,
+  res,
+  next
+) {
   try {
-    const token = getBearerToken(req);
+    const token =
+      getBearerToken(req);
 
     if (!token) {
       return res.status(401).json({
         success: false,
         error: "UNAUTHORIZED",
-        message: "Authentication token is required.",
+        message:
+          "Authentication token is required.",
       });
     }
 
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded =
+      jwt.verify(
+        token,
+        JWT_SECRET
+      );
 
-    const result = await pool.query(
-      `
-      SELECT
-        id,
-        discord_id,
-        username,
-        created_at,
-        updated_at
-      FROM accounts
-      WHERE id = $1
-      LIMIT 1
-      `,
-      [decoded.sub]
-    );
+    const result =
+      await pool.query(
+        `
+        SELECT
+          id,
+          discord_id,
+          username,
+          access_key,
+          created_at,
+          updated_at
+        FROM accounts
+        WHERE id = $1
+        LIMIT 1
+        `,
+        [decoded.sub]
+      );
 
-    if (result.rows.length === 0) {
+    if (
+      result.rows.length === 0
+    ) {
       return res.status(401).json({
         success: false,
         error: "ACCOUNT_NOT_FOUND",
-        message: "Account no longer exists.",
+        message:
+          "Account no longer exists.",
       });
     }
 
-    req.account = result.rows[0];
+    req.account =
+      result.rows[0];
 
     next();
   } catch (error) {
-    console.error("Authentication error:", error);
+    console.error(
+      "❌ Authentication error:",
+      error
+    );
 
     return res.status(401).json({
       success: false,
       error: "INVALID_TOKEN",
-      message: "Invalid or expired authentication token.",
+      message:
+        "Invalid or expired token.",
     });
   }
 }
@@ -226,55 +294,61 @@ async function authenticate(req, res, next) {
    ACCESS KEY
 ========================================================= */
 
-function getConfiguredAccessKeys() {
-  const raw = process.env.ACCESS_KEYS || "";
+/*
+   Access Key is now OPTIONAL.
 
-  return raw
-    .split(",")
-    .map((key) => key.trim())
-    .filter(Boolean);
+   If the user does not enter one,
+   the server generates one automatically.
+*/
+
+function generateAccessKey() {
+  const part1 =
+    crypto
+      .randomBytes(3)
+      .toString("hex")
+      .toUpperCase();
+
+  const part2 =
+    crypto
+      .randomBytes(3)
+      .toString("hex")
+      .toUpperCase();
+
+  const part3 =
+    crypto
+      .randomBytes(3)
+      .toString("hex")
+      .toUpperCase();
+
+  return `N10-${part1}-${part2}-${part3}`;
 }
 
-async function validateAccessKey(accessKey) {
-  const key = cleanString(accessKey);
+async function createUniqueAccessKey() {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const key =
+      generateAccessKey();
 
-  if (!key) {
-    return false;
+    const result =
+      await pool.query(
+        `
+        SELECT id
+        FROM accounts
+        WHERE access_key = $1
+        LIMIT 1
+        `,
+        [key]
+      );
+
+    if (
+      result.rows.length === 0
+    ) {
+      return key;
+    }
   }
 
-  /*
-   First check environment variable:
-   ACCESS_KEYS=KEY1,KEY2,KEY3
-  */
-
-  const envKeys = getConfiguredAccessKeys();
-
-  if (envKeys.includes(key)) {
-    return true;
-  }
-
-  /*
-   Then check PostgreSQL access_keys table.
-  */
-
-  try {
-    const result = await pool.query(
-      `
-      SELECT id
-      FROM access_keys
-      WHERE key_value = $1
-        AND active = TRUE
-      LIMIT 1
-      `,
-      [key]
-    );
-
-    return result.rows.length > 0;
-  } catch (error) {
-    console.error("Access key validation error:", error);
-
-    return false;
-  }
+  throw new Error(
+    "Unable to generate unique Access Key."
+  );
 }
 
 /* =========================================================
@@ -282,14 +356,20 @@ async function validateAccessKey(accessKey) {
 ========================================================= */
 
 async function initializeDatabase() {
-  console.log("⏳ Connecting to PostgreSQL...");
+  console.log(
+    "⏳ Connecting to PostgreSQL..."
+  );
 
-  await pool.query("SELECT 1");
+  await pool.query(
+    "SELECT 1"
+  );
 
-  console.log("✅ PostgreSQL connected.");
+  console.log(
+    "✅ PostgreSQL connected."
+  );
 
   /*
-   Accounts
+   Create accounts table if it does not exist.
   */
 
   await pool.query(`
@@ -302,17 +382,42 @@ async function initializeDatabase() {
 
       password_hash TEXT NOT NULL,
 
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      access_key TEXT,
 
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ
+        NOT NULL DEFAULT NOW(),
 
-      CONSTRAINT accounts_discord_id_key
-        UNIQUE (discord_id)
+      updated_at TIMESTAMPTZ
+        NOT NULL DEFAULT NOW()
     );
   `);
 
   /*
-   Access keys
+   IMPORTANT:
+   Do not recreate the old constraint.
+   Create a unique index instead.
+   This protects Discord IDs from duplicates.
+  */
+
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS
+      accounts_discord_id_unique_idx
+    ON accounts(discord_id);
+  `);
+
+  /*
+   Unique Access Key index.
+  */
+
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS
+      accounts_access_key_unique_idx
+    ON accounts(access_key)
+    WHERE access_key IS NOT NULL;
+  `);
+
+  /*
+   Access keys table.
   */
 
   await pool.query(`
@@ -321,16 +426,16 @@ async function initializeDatabase() {
 
       key_value TEXT NOT NULL UNIQUE,
 
-      active BOOLEAN NOT NULL DEFAULT TRUE,
+      active BOOLEAN
+        NOT NULL DEFAULT TRUE,
 
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      created_at TIMESTAMPTZ
+        NOT NULL DEFAULT NOW()
     );
   `);
 
   /*
-   Sessions table
-   Not required for JWT, but useful if you later
-   need server-side session management.
+   Login logs.
   */
 
   await pool.query(`
@@ -341,153 +446,240 @@ async function initializeDatabase() {
 
       discord_id VARCHAR(32),
 
-      success BOOLEAN NOT NULL DEFAULT FALSE,
+      success BOOLEAN
+        NOT NULL DEFAULT FALSE,
 
       ip_address TEXT,
 
       user_agent TEXT,
 
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      created_at TIMESTAMPTZ
+        NOT NULL DEFAULT NOW()
     );
   `);
 
   /*
-   Helpful index.
+   Helpful indexes.
   */
 
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_accounts_discord_id
+    CREATE INDEX IF NOT EXISTS
+      idx_accounts_discord_id
     ON accounts(discord_id);
   `);
 
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_login_logs_account_id
+    CREATE INDEX IF NOT EXISTS
+      idx_login_logs_account_id
     ON login_logs(account_id);
   `);
 
-  console.log("✅ Database initialized.");
+  /*
+   Add access_key column to an existing
+   old database if necessary.
+  */
+
+  await pool.query(`
+    ALTER TABLE accounts
+    ADD COLUMN IF NOT EXISTS access_key TEXT;
+  `);
+
+  /*
+   Give old accounts an Access Key.
+  */
+
+  const oldAccounts =
+    await pool.query(`
+      SELECT id
+      FROM accounts
+      WHERE access_key IS NULL
+    `);
+
+  for (
+    const account of oldAccounts.rows
+  ) {
+    const key =
+      await createUniqueAccessKey();
+
+    await pool.query(
+      `
+      UPDATE accounts
+      SET
+        access_key = $1,
+        updated_at = NOW()
+      WHERE id = $2
+      `,
+      [
+        key,
+        account.id,
+      ]
+    );
+
+    console.log(
+      `🔑 Access Key generated for account ${account.id}`
+    );
+  }
+
+  console.log(
+    "✅ Database initialized."
+  );
 }
+
+/* =========================================================
+   ROOT
+========================================================= */
+
+app.get(
+  "/",
+  (req, res) => {
+    res.json({
+      success: true,
+
+      name: "N10 Server",
+
+      status: "online",
+
+      environment:
+        NODE_ENV,
+
+      time:
+        new Date().toISOString(),
+    });
+  }
+);
 
 /* =========================================================
    HEALTH
 ========================================================= */
 
-app.get("/", (req, res) => {
-  res.json({
-    success: true,
-    name: "N10 Server",
-    status: "online",
-    environment: NODE_ENV,
-    time: new Date().toISOString(),
-  });
-});
-
-app.get("/health", async (req, res) => {
+async function healthHandler(
+  req,
+  res
+) {
   try {
-    await pool.query("SELECT 1");
+    await pool.query(
+      "SELECT 1"
+    );
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       status: "healthy",
       database: "connected",
-      time: new Date().toISOString(),
+      time:
+        new Date().toISOString(),
     });
   } catch (error) {
-    console.error("Health check failed:", error);
+    console.error(
+      "❌ Health error:",
+      error
+    );
 
-    res.status(503).json({
+    return res.status(503).json({
       success: false,
       status: "unhealthy",
       database: "disconnected",
     });
   }
-});
+}
 
-app.get("/api/health", async (req, res) => {
-  try {
-    await pool.query("SELECT 1");
+app.get(
+  "/health",
+  healthHandler
+);
 
-    res.status(200).json({
-      success: true,
-      status: "healthy",
-      database: "connected",
-    });
-  } catch (error) {
-    console.error("API health check failed:", error);
-
-    res.status(503).json({
-      success: false,
-      status: "unhealthy",
-      database: "disconnected",
-    });
-  }
-});
+app.get(
+  "/api/health",
+  healthHandler
+);
 
 /* =========================================================
    REGISTER
 ========================================================= */
 
-async function registerHandler(req, res) {
+async function registerHandler(
+  req,
+  res
+) {
   try {
+    const discordId =
+      normalizeDiscordId(
+        req.body.discordId ||
+          req.body.discord_id ||
+          req.body.discordID ||
+          req.body.userId ||
+          req.body.user_id
+      );
+
+    const password =
+      cleanString(
+        req.body.password ||
+          req.body.pass ||
+          req.body.password1
+      );
+
+    const confirmPassword =
+      cleanString(
+        req.body.confirmPassword ||
+          req.body.confirm_password ||
+          req.body.password2 ||
+          req.body.confirmPass
+      );
+
+    const username =
+      cleanString(
+        req.body.username ||
+          req.body.name ||
+          req.body.displayName
+      );
+
     /*
-     Accept multiple possible frontend field names.
+     Access Key is OPTIONAL.
+     We accept it if the frontend sends one.
     */
 
-    const discordId = normalizeDiscordId(
-      req.body.discordId ||
-        req.body.discord_id ||
-        req.body.discordID ||
-        req.body.userId ||
-        req.body.user_id
-    );
-
-    const password = cleanString(
-      req.body.password ||
-        req.body.pass ||
-        req.body.password1
-    );
-
-    const confirmPassword = cleanString(
-      req.body.confirmPassword ||
-        req.body.confirm_password ||
-        req.body.password2 ||
-        req.body.confirmPass
-    );
-
-    const accessKey = cleanString(
-      req.body.accessKey ||
-        req.body.access_key ||
-        req.body.key ||
-        req.headers["x-access-key"]
-    );
-
-    const username = cleanString(
-      req.body.username ||
-        req.body.name ||
-        req.body.displayName
-    );
+    const requestedAccessKey =
+      cleanString(
+        req.body.accessKey ||
+          req.body.access_key ||
+          req.body.key ||
+          req.headers["x-access-key"]
+      );
 
     /* -----------------------------------------------
-       Validation
+       Validate Discord ID
     ----------------------------------------------- */
 
     if (!discordId) {
       return res.status(400).json({
         success: false,
         error: "DISCORD_ID_REQUIRED",
-        message: "Discord ID is required.",
+        message:
+          "Discord ID is required.",
       });
     }
 
-    if (!isValidDiscordId(discordId)) {
+    if (
+      !isValidDiscordId(
+        discordId
+      )
+    ) {
       return res.status(400).json({
         success: false,
         error: "INVALID_DISCORD_ID",
-        message: "Invalid Discord ID.",
+        message:
+          "Invalid Discord ID.",
       });
     }
 
-    if (!isValidPassword(password)) {
+    /* -----------------------------------------------
+       Validate password
+    ----------------------------------------------- */
+
+    if (
+      !isValidPassword(
+        password
+      )
+    ) {
       return res.status(400).json({
         success: false,
         error: "INVALID_PASSWORD",
@@ -498,115 +690,29 @@ async function registerHandler(req, res) {
 
     if (
       confirmPassword &&
-      password !== confirmPassword
+      password !==
+        confirmPassword
     ) {
       return res.status(400).json({
         success: false,
         error: "PASSWORD_MISMATCH",
-        message: "Passwords do not match.",
-      });
-    }
-
-    /*
-     Access key is required.
-    */
-
-    const accessKeyValid =
-      await validateAccessKey(accessKey);
-
-    if (!accessKeyValid) {
-      return res.status(403).json({
-        success: false,
-        error: "INVALID_ACCESS_KEY",
-        message: "Invalid or inactive Access Key.",
-      });
-    }
-
-    /* -----------------------------------------------
-       IMPORTANT:
-       Check existing account BEFORE INSERT.
-       This avoids the exact problem visible
-       in your Render logs.
-    ----------------------------------------------- */
-
-    const existing = await pool.query(
-      `
-      SELECT
-        id,
-        discord_id,
-        username,
-        created_at,
-        updated_at
-      FROM accounts
-      WHERE discord_id = $1
-      LIMIT 1
-      `,
-      [discordId]
-    );
-
-    if (existing.rows.length > 0) {
-      return res.status(409).json({
-        success: false,
-        error: "DISCORD_ALREADY_REGISTERED",
         message:
-          "This Discord account is already registered.",
-        account: publicAccount(existing.rows[0]),
+          "Passwords do not match.",
       });
     }
 
     /* -----------------------------------------------
-       Hash password
+       CHECK EXISTING ACCOUNT
     ----------------------------------------------- */
 
-    const passwordHash =
-      await bcrypt.hash(password, 12);
-
-    /*
-     IMPORTANT:
-     ON CONFLICT DO NOTHING gives us a second
-     protection against race conditions.
-
-     Example:
-     Two registration requests arrive at the
-     exact same millisecond with the same Discord ID.
-    */
-
-    const inserted = await pool.query(
-      `
-      INSERT INTO accounts (
-        discord_id,
-        username,
-        password_hash
-      )
-      VALUES ($1, $2, $3)
-      ON CONFLICT (discord_id)
-      DO NOTHING
-      RETURNING
-        id,
-        discord_id,
-        username,
-        created_at,
-        updated_at
-      `,
-      [
-        discordId,
-        username || null,
-        passwordHash,
-      ]
-    );
-
-    /*
-     If nothing was inserted, another request registered
-     this Discord ID first.
-    */
-
-    if (inserted.rows.length === 0) {
-      const alreadyExists = await pool.query(
+    const existing =
+      await pool.query(
         `
         SELECT
           id,
           discord_id,
           username,
+          access_key,
           created_at,
           updated_at
         FROM accounts
@@ -616,151 +722,303 @@ async function registerHandler(req, res) {
         [discordId]
       );
 
+    if (
+      existing.rows.length > 0
+    ) {
+      /*
+       IMPORTANT:
+       Do NOT try INSERT again.
+       This fixes:
+       accounts_discord_id_key
+      */
+
       return res.status(409).json({
         success: false,
-        error: "DISCORD_ALREADY_REGISTERED",
+        error:
+          "DISCORD_ALREADY_REGISTERED",
+
         message:
           "This Discord account is already registered.",
+
         account:
-          alreadyExists.rows.length > 0
-            ? publicAccount(alreadyExists.rows[0])
+          publicAccount(
+            existing.rows[0]
+          ),
+      });
+    }
+
+    /* -----------------------------------------------
+       PASSWORD HASH
+    ----------------------------------------------- */
+
+    const passwordHash =
+      await bcrypt.hash(
+        password,
+        12
+      );
+
+    /* -----------------------------------------------
+       ACCESS KEY
+    ----------------------------------------------- */
+
+    let accessKey =
+      requestedAccessKey;
+
+    /*
+     If no Access Key was entered,
+     automatically create one.
+    */
+
+    if (!accessKey) {
+      accessKey =
+        await createUniqueAccessKey();
+    }
+
+    /* -----------------------------------------------
+       INSERT
+    ----------------------------------------------- */
+
+    const inserted =
+      await pool.query(
+        `
+        INSERT INTO accounts (
+          discord_id,
+          username,
+          password_hash,
+          access_key
+        )
+        VALUES (
+          $1,
+          $2,
+          $3,
+          $4
+        )
+
+        ON CONFLICT (discord_id)
+        DO NOTHING
+
+        RETURNING
+          id,
+          discord_id,
+          username,
+          access_key,
+          created_at,
+          updated_at
+        `,
+        [
+          discordId,
+          username || null,
+          passwordHash,
+          accessKey,
+        ]
+      );
+
+    /*
+     Race condition protection.
+    */
+
+    if (
+      inserted.rows.length === 0
+    ) {
+      const duplicate =
+        await pool.query(
+          `
+          SELECT
+            id,
+            discord_id,
+            username,
+            access_key,
+            created_at,
+            updated_at
+          FROM accounts
+          WHERE discord_id = $1
+          LIMIT 1
+          `,
+          [discordId]
+        );
+
+      return res.status(409).json({
+        success: false,
+        error:
+          "DISCORD_ALREADY_REGISTERED",
+
+        message:
+          "This Discord account is already registered.",
+
+        account:
+          duplicate.rows.length
+            ? publicAccount(
+                duplicate.rows[0]
+              )
             : null,
       });
     }
 
-    const account = inserted.rows[0];
+    const account =
+      inserted.rows[0];
 
-    const token = createToken(account);
+    /*
+     Create JWT.
+    */
+
+    const token =
+      createToken(account);
 
     console.log(
-      `✅ New account registered: ${discordId}`
+      `✅ REGISTER SUCCESS: ${discordId}`
     );
 
     return res.status(201).json({
       success: true,
-      message: "Registration successful.",
+
+      message:
+        "Registration successful.",
+
       token,
-      account: publicAccount(account),
+
+      accessKey:
+        account.access_key,
+
+      access_key:
+        account.access_key,
+
+      account:
+        publicAccount(account),
     });
   } catch (error) {
     /*
-     PostgreSQL duplicate key protection.
-     This specifically handles:
-     23505
-     accounts_discord_id_key
+     Duplicate key protection.
     */
 
-    if (error && error.code === "23505") {
+    if (
+      error &&
+      error.code === "23505"
+    ) {
       console.error(
-        "⚠️ Duplicate registration prevented:",
-        error.detail || error.message
+        "⚠️ Duplicate value prevented:",
+        error.detail ||
+          error.message
       );
 
       return res.status(409).json({
         success: false,
-        error: "DISCORD_ALREADY_REGISTERED",
+
+        error:
+          "DISCORD_ALREADY_REGISTERED",
+
         message:
           "This Discord account is already registered.",
       });
     }
 
-    console.error("❌ Register error:", error);
+    console.error(
+      "❌ REGISTER ERROR:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
-      error: "REGISTER_FAILED",
+
+      error:
+        "REGISTER_FAILED",
+
       message:
         "Registration failed. Please try again.",
     });
   }
 }
 
-/*
- Support both:
- POST /register
- POST /api/register
-*/
+app.post(
+  "/register",
+  registerHandler
+);
 
-app.post("/register", registerHandler);
-app.post("/api/register", registerHandler);
+app.post(
+  "/api/register",
+  registerHandler
+);
 
 /* =========================================================
    LOGIN
 ========================================================= */
 
-async function loginHandler(req, res) {
+async function loginHandler(
+  req,
+  res
+) {
   try {
-    const discordId = normalizeDiscordId(
-      req.body.discordId ||
-        req.body.discord_id ||
-        req.body.discordID ||
-        req.body.userId ||
-        req.body.user_id
-    );
+    const discordId =
+      normalizeDiscordId(
+        req.body.discordId ||
+          req.body.discord_id ||
+          req.body.discordID ||
+          req.body.userId ||
+          req.body.user_id
+      );
 
-    const password = cleanString(
-      req.body.password ||
-        req.body.pass
-    );
+    const password =
+      cleanString(
+        req.body.password ||
+          req.body.pass
+      );
 
-    if (!discordId || !isValidDiscordId(discordId)) {
+    if (
+      !discordId ||
+      !isValidDiscordId(
+        discordId
+      )
+    ) {
       return res.status(400).json({
         success: false,
-        error: "INVALID_DISCORD_ID",
-        message: "Invalid Discord ID.",
+        error:
+          "INVALID_DISCORD_ID",
+        message:
+          "Invalid Discord ID.",
       });
     }
 
     if (!password) {
       return res.status(400).json({
         success: false,
-        error: "PASSWORD_REQUIRED",
-        message: "Password is required.",
+        error:
+          "PASSWORD_REQUIRED",
+        message:
+          "Password is required.",
       });
     }
 
-    const result = await pool.query(
-      `
-      SELECT
-        id,
-        discord_id,
-        username,
-        password_hash,
-        created_at,
-        updated_at
-      FROM accounts
-      WHERE discord_id = $1
-      LIMIT 1
-      `,
-      [discordId]
-    );
-
-    if (result.rows.length === 0) {
+    const result =
       await pool.query(
         `
-        INSERT INTO login_logs (
+        SELECT
+          id,
           discord_id,
-          success,
-          ip_address,
-          user_agent
-        )
-        VALUES ($1, FALSE, $2, $3)
+          username,
+          password_hash,
+          access_key,
+          created_at,
+          updated_at
+        FROM accounts
+        WHERE discord_id = $1
+        LIMIT 1
         `,
-        [
-          discordId,
-          req.ip || null,
-          req.headers["user-agent"] || null,
-        ]
+        [discordId]
       );
 
+    if (
+      result.rows.length === 0
+    ) {
       return res.status(401).json({
         success: false,
-        error: "INVALID_CREDENTIALS",
-        message: "Discord ID or password is incorrect.",
+        error:
+          "INVALID_CREDENTIALS",
+        message:
+          "Discord ID or password is incorrect.",
       });
     }
 
-    const account = result.rows[0];
+    const account =
+      result.rows[0];
 
     const passwordCorrect =
       await bcrypt.compare(
@@ -769,34 +1027,46 @@ async function loginHandler(req, res) {
       );
 
     if (!passwordCorrect) {
-      await pool.query(
-        `
-        INSERT INTO login_logs (
-          account_id,
-          discord_id,
-          success,
-          ip_address,
-          user_agent
-        )
-        VALUES ($1, $2, FALSE, $3, $4)
-        `,
-        [
-          account.id,
-          account.discord_id,
-          req.ip || null,
-          req.headers["user-agent"] || null,
-        ]
-      );
-
       return res.status(401).json({
         success: false,
-        error: "INVALID_CREDENTIALS",
-        message: "Discord ID or password is incorrect.",
+        error:
+          "INVALID_CREDENTIALS",
+        message:
+          "Discord ID or password is incorrect.",
       });
     }
 
     /*
-     Successful login.
+     If old account doesn't have Access Key,
+     create one now.
+    */
+
+    if (
+      !account.access_key
+    ) {
+      const key =
+        await createUniqueAccessKey();
+
+      await pool.query(
+        `
+        UPDATE accounts
+        SET
+          access_key = $1,
+          updated_at = NOW()
+        WHERE id = $2
+        `,
+        [
+          key,
+          account.id,
+        ]
+      );
+
+      account.access_key =
+        key;
+    }
+
+    /*
+     Log successful login.
     */
 
     await pool.query(
@@ -808,117 +1078,180 @@ async function loginHandler(req, res) {
         ip_address,
         user_agent
       )
-      VALUES ($1, $2, TRUE, $3, $4)
+      VALUES (
+        $1,
+        $2,
+        TRUE,
+        $3,
+        $4
+      )
       `,
       [
         account.id,
         account.discord_id,
         req.ip || null,
-        req.headers["user-agent"] || null,
+        req.headers[
+          "user-agent"
+        ] || null,
       ]
     );
 
-    const token = createToken(account);
+    const token =
+      createToken(account);
 
     console.log(
-      `✅ Login successful: ${discordId}`
+      `✅ LOGIN SUCCESS: ${discordId}`
     );
 
     return res.status(200).json({
       success: true,
-      message: "Login successful.",
+
+      message:
+        "Login successful.",
+
       token,
-      account: publicAccount(account),
-    });
-  } catch (error) {
-    console.error("❌ Login error:", error);
 
-    return res.status(500).json({
-      success: false,
-      error: "LOGIN_FAILED",
-      message: "Login failed. Please try again.",
-    });
-  }
-}
+      accessKey:
+        account.access_key,
 
-app.post("/login", loginHandler);
-app.post("/api/login", loginHandler);
+      access_key:
+        account.access_key,
 
-/* =========================================================
-   CURRENT USER
-========================================================= */
-
-async function meHandler(req, res) {
-  try {
-    return res.status(200).json({
-      success: true,
-      account: publicAccount(req.account),
-    });
-  } catch (error) {
-    console.error("❌ /me error:", error);
-
-    return res.status(500).json({
-      success: false,
-      error: "ME_FAILED",
-      message: "Unable to load account.",
-    });
-  }
-}
-
-app.get("/me", authenticate, meHandler);
-app.get("/api/me", authenticate, meHandler);
-
-/* =========================================================
-   CHECK DISCORD ID
-========================================================= */
-
-async function checkDiscordHandler(req, res) {
-  try {
-    const discordId = normalizeDiscordId(
-      req.body.discordId ||
-        req.body.discord_id ||
-        req.query.discordId ||
-        req.query.discord_id
-    );
-
-    if (!discordId || !isValidDiscordId(discordId)) {
-      return res.status(400).json({
-        success: false,
-        error: "INVALID_DISCORD_ID",
-        message: "Invalid Discord ID.",
-      });
-    }
-
-    const result = await pool.query(
-      `
-      SELECT id
-      FROM accounts
-      WHERE discord_id = $1
-      LIMIT 1
-      `,
-      [discordId]
-    );
-
-    return res.status(200).json({
-      success: true,
-      registered: result.rows.length > 0,
+      account:
+        publicAccount(account),
     });
   } catch (error) {
     console.error(
-      "❌ Discord check error:",
+      "❌ LOGIN ERROR:",
       error
     );
 
     return res.status(500).json({
       success: false,
-      error: "CHECK_FAILED",
-      message: "Unable to check Discord account.",
+
+      error:
+        "LOGIN_FAILED",
+
+      message:
+        "Login failed. Please try again.",
     });
   }
 }
 
-app.get("/check-discord", checkDiscordHandler);
-app.post("/check-discord", checkDiscordHandler);
+app.post(
+  "/login",
+  loginHandler
+);
+
+app.post(
+  "/api/login",
+  loginHandler
+);
+
+/* =========================================================
+   CURRENT USER
+========================================================= */
+
+async function meHandler(
+  req,
+  res
+) {
+  return res.status(200).json({
+    success: true,
+
+    account:
+      publicAccount(
+        req.account
+      ),
+  });
+}
+
+app.get(
+  "/me",
+  authenticate,
+  meHandler
+);
+
+app.get(
+  "/api/me",
+  authenticate,
+  meHandler
+);
+
+/* =========================================================
+   CHECK DISCORD
+========================================================= */
+
+async function checkDiscordHandler(
+  req,
+  res
+) {
+  try {
+    const discordId =
+      normalizeDiscordId(
+        req.body.discordId ||
+          req.body.discord_id ||
+          req.query.discordId ||
+          req.query.discord_id
+      );
+
+    if (
+      !discordId ||
+      !isValidDiscordId(
+        discordId
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "INVALID_DISCORD_ID",
+        message:
+          "Invalid Discord ID.",
+      });
+    }
+
+    const result =
+      await pool.query(
+        `
+        SELECT id
+        FROM accounts
+        WHERE discord_id = $1
+        LIMIT 1
+        `,
+        [discordId]
+      );
+
+    return res.status(200).json({
+      success: true,
+
+      registered:
+        result.rows.length > 0,
+    });
+  } catch (error) {
+    console.error(
+      "❌ CHECK DISCORD ERROR:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      error:
+        "CHECK_FAILED",
+      message:
+        "Unable to check Discord account.",
+    });
+  }
+}
+
+app.get(
+  "/check-discord",
+  checkDiscordHandler
+);
+
+app.post(
+  "/check-discord",
+  checkDiscordHandler
+);
 
 app.get(
   "/api/check-discord",
@@ -934,42 +1267,72 @@ app.post(
    ACCESS KEY CHECK
 ========================================================= */
 
-async function checkAccessKeyHandler(req, res) {
+async function checkAccessKeyHandler(
+  req,
+  res
+) {
   try {
-    const accessKey = cleanString(
-      req.body.accessKey ||
-        req.body.access_key ||
-        req.body.key ||
-        req.query.accessKey ||
-        req.query.access_key ||
-        req.headers["x-access-key"]
-    );
+    const key =
+      cleanString(
+        req.body.accessKey ||
+          req.body.access_key ||
+          req.body.key ||
+          req.query.accessKey ||
+          req.query.access_key ||
+          req.headers[
+            "x-access-key"
+          ]
+      );
 
-    if (!accessKey) {
-      return res.status(400).json({
-        success: false,
-        error: "ACCESS_KEY_REQUIRED",
-        message: "Access Key is required.",
+    /*
+     Empty key is now allowed.
+     This prevents the frontend from getting
+     stuck just because Access Key is empty.
+    */
+
+    if (!key) {
+      return res.status(200).json({
+        success: true,
+        valid: true,
+        required: false,
+        message:
+          "Access Key is optional.",
       });
     }
 
-    const valid =
-      await validateAccessKey(accessKey);
+    const result =
+      await pool.query(
+        `
+        SELECT id
+        FROM accounts
+        WHERE access_key = $1
+        LIMIT 1
+        `,
+        [key]
+      );
 
     return res.status(200).json({
       success: true,
-      valid,
+
+      valid:
+        result.rows.length > 0,
+
+      required: false,
     });
   } catch (error) {
     console.error(
-      "❌ Access key check error:",
+      "❌ ACCESS KEY ERROR:",
       error
     );
 
     return res.status(500).json({
       success: false,
-      error: "ACCESS_KEY_CHECK_FAILED",
-      message: "Unable to check Access Key.",
+
+      error:
+        "ACCESS_KEY_CHECK_FAILED",
+
+      message:
+        "Unable to check Access Key.",
     });
   }
 }
@@ -992,121 +1355,696 @@ app.get(
 app.post(
   "/api/check-access-key",
   checkAccessKeyHandler
+);
+
+/* =========================================================
+   GENERATE ACCESS KEY
+========================================================= */
+
+async function generateAccessKeyHandler(
+  req,
+  res
+) {
+  try {
+    const key =
+      await createUniqueAccessKey();
+
+    /*
+     Save it in access_keys table too.
+    */
+
+    await pool.query(
+      `
+      INSERT INTO access_keys (
+        key_value,
+        active
+      )
+      VALUES ($1, TRUE)
+      ON CONFLICT (key_value)
+      DO NOTHING
+      `,
+      [key]
+    );
+
+    return res.status(201).json({
+      success: true,
+
+      accessKey: key,
+
+      access_key: key,
+
+      message:
+        "Access Key generated.",
+    });
+  } catch (error) {
+    console.error(
+      "❌ GENERATE KEY ERROR:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+
+      error:
+        "ACCESS_KEY_GENERATION_FAILED",
+
+      message:
+        "Unable to generate Access Key.",
+    });
+  }
+}
+
+app.get(
+  "/generate-access-key",
+  generateAccessKeyHandler
+);
+
+app.post(
+  "/generate-access-key",
+  generateAccessKeyHandler
+);
+
+app.get(
+  "/api/generate-access-key",
+  generateAccessKeyHandler
+);
+
+app.post(
+  "/api/generate-access-key",
+  generateAccessKeyHandler
+);
+
+/* =========================================================
+   DISCORD OAUTH
+========================================================= */
+
+/*
+   This endpoint gives the frontend the Discord
+   authorization URL.
+
+   Required Render variables:
+
+   DISCORD_CLIENT_ID
+   DISCORD_CLIENT_SECRET
+   DISCORD_REDIRECT_URI
+*/
+
+app.get(
+  "/auth/discord",
+  (req, res) => {
+    try {
+      if (
+        !DISCORD_CLIENT_ID ||
+        !DISCORD_REDIRECT_URI
+      ) {
+        return res.status(503).json({
+          success: false,
+
+          error:
+            "DISCORD_NOT_CONFIGURED",
+
+          message:
+            "Discord OAuth is not configured on the server.",
+        });
+      }
+
+      const params =
+        new URLSearchParams({
+          client_id:
+            DISCORD_CLIENT_ID,
+
+          redirect_uri:
+            DISCORD_REDIRECT_URI,
+
+          response_type:
+            "code",
+
+          scope:
+            "identify",
+        });
+
+      const url =
+        "https://discord.com/oauth2/authorize?" +
+        params.toString();
+
+      return res.json({
+        success: true,
+
+        url,
+      });
+    } catch (error) {
+      console.error(
+        "❌ Discord OAuth URL error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+
+        error:
+          "DISCORD_OAUTH_ERROR",
+      });
+    }
+  }
+);
+
+/* =========================================================
+   DISCORD CALLBACK
+========================================================= */
+
+app.get(
+  "/auth/discord/callback",
+  async (req, res) => {
+    try {
+      const code =
+        cleanString(
+          req.query.code
+        );
+
+      const oauthError =
+        cleanString(
+          req.query.error
+        );
+
+      if (oauthError) {
+        return res.redirect(
+          `${FRONTEND_URL}/?discord_error=${encodeURIComponent(
+            oauthError
+          )}`
+        );
+      }
+
+      if (!code) {
+        return res.redirect(
+          `${FRONTEND_URL}/?discord_error=missing_code`
+        );
+      }
+
+      if (
+        !DISCORD_CLIENT_ID ||
+        !DISCORD_CLIENT_SECRET ||
+        !DISCORD_REDIRECT_URI
+      ) {
+        return res.redirect(
+          `${FRONTEND_URL}/?discord_error=server_not_configured`
+        );
+      }
+
+      /*
+       Exchange OAuth code for Discord token.
+      */
+
+      const tokenResponse =
+        await fetch(
+          "https://discord.com/api/oauth2/token",
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/x-www-form-urlencoded",
+            },
+
+            body:
+              new URLSearchParams({
+                client_id:
+                  DISCORD_CLIENT_ID,
+
+                client_secret:
+                  DISCORD_CLIENT_SECRET,
+
+                grant_type:
+                  "authorization_code",
+
+                code,
+
+                redirect_uri:
+                  DISCORD_REDIRECT_URI,
+              }).toString(),
+          }
+        );
+
+      if (
+        !tokenResponse.ok
+      ) {
+        const text =
+          await tokenResponse.text();
+
+        console.error(
+          "❌ Discord token error:",
+          text
+        );
+
+        return res.redirect(
+          `${FRONTEND_URL}/?discord_error=token_exchange_failed`
+        );
+      }
+
+      const tokenData =
+        await tokenResponse.json();
+
+      /*
+       Get Discord user.
+      */
+
+      const userResponse =
+        await fetch(
+          "https://discord.com/api/users/@me",
+          {
+            headers: {
+              Authorization:
+                `Bearer ${tokenData.access_token}`,
+            },
+          }
+        );
+
+      if (
+        !userResponse.ok
+      ) {
+        const text =
+          await userResponse.text();
+
+        console.error(
+          "❌ Discord user error:",
+          text
+        );
+
+        return res.redirect(
+          `${FRONTEND_URL}/?discord_error=user_fetch_failed`
+        );
+      }
+
+      const discordUser =
+        await userResponse.json();
+
+      const discordId =
+        normalizeDiscordId(
+          discordUser.id
+        );
+
+      const username =
+        cleanString(
+          discordUser.global_name ||
+            discordUser.username ||
+            ""
+        );
+
+      if (
+        !isValidDiscordId(
+          discordId
+        )
+      ) {
+        return res.redirect(
+          `${FRONTEND_URL}/?discord_error=invalid_discord_id`
+        );
+      }
+
+      /*
+       Check if account exists.
+      */
+
+      let result =
+        await pool.query(
+          `
+          SELECT
+            id,
+            discord_id,
+            username,
+            password_hash,
+            access_key,
+            created_at,
+            updated_at
+          FROM accounts
+          WHERE discord_id = $1
+          LIMIT 1
+          `,
+          [discordId]
+        );
+
+      let account;
+
+      /*
+       Existing account:
+       Login automatically.
+      */
+
+      if (
+        result.rows.length > 0
+      ) {
+        account =
+          result.rows[0];
+
+        if (
+          !account.access_key
+        ) {
+          account.access_key =
+            await createUniqueAccessKey();
+
+          await pool.query(
+            `
+            UPDATE accounts
+            SET
+              access_key = $1,
+              updated_at = NOW()
+            WHERE id = $2
+            `,
+            [
+              account.access_key,
+              account.id,
+            ]
+          );
+        }
+
+        if (
+          !account.username &&
+          username
+        ) {
+          account.username =
+            username;
+
+          await pool.query(
+            `
+            UPDATE accounts
+            SET
+              username = $1,
+              updated_at = NOW()
+            WHERE id = $2
+            `,
+            [
+              username,
+              account.id,
+            ]
+          );
+        }
+      } else {
+        /*
+         New Discord account.
+
+         We create a random password hash because
+         Discord OAuth does not need the normal password.
+        */
+
+        const randomPassword =
+          crypto.randomBytes(
+            32
+          ).toString("hex");
+
+        const passwordHash =
+          await bcrypt.hash(
+            randomPassword,
+            12
+          );
+
+        const accessKey =
+          await createUniqueAccessKey();
+
+        const inserted =
+          await pool.query(
+            `
+            INSERT INTO accounts (
+              discord_id,
+              username,
+              password_hash,
+              access_key
+            )
+            VALUES (
+              $1,
+              $2,
+              $3,
+              $4
+            )
+
+            ON CONFLICT (discord_id)
+            DO NOTHING
+
+            RETURNING
+              id,
+              discord_id,
+              username,
+              password_hash,
+              access_key,
+              created_at,
+              updated_at
+            `,
+            [
+              discordId,
+              username ||
+                null,
+              passwordHash,
+              accessKey,
+            ]
+          );
+
+        /*
+         Race condition:
+         Someone registered the same Discord ID
+         at exactly the same time.
+        */
+
+        if (
+          inserted.rows.length === 0
+        ) {
+          const existingAccount =
+            await pool.query(
+              `
+              SELECT
+                id,
+                discord_id,
+                username,
+                password_hash,
+                access_key,
+                created_at,
+                updated_at
+              FROM accounts
+              WHERE discord_id = $1
+              LIMIT 1
+              `,
+              [discordId]
+            );
+
+          if (
+            existingAccount.rows.length === 0
+          ) {
+            return res.redirect(
+              `${FRONTEND_URL}/?discord_error=registration_failed`
+            );
+          }
+
+          account =
+            existingAccount.rows[0];
+        } else {
+          account =
+            inserted.rows[0];
+        }
+      }
+
+      /*
+       Create JWT.
+      */
+
+      const token =
+        createToken(account);
+
+      /*
+       Redirect to frontend with token.
+
+       The frontend can read:
+       token
+       discord_id
+       access_key
+      */
+
+      const redirectParams =
+        new URLSearchParams({
+          token,
+
+          discord_id:
+            String(
+              account.discord_id
+            ),
+
+          access_key:
+            String(
+              account.access_key || ""
+            ),
+        });
+
+      return res.redirect(
+        `${FRONTEND_URL}/?${redirectParams.toString()}`
+      );
+    } catch (error) {
+      console.error(
+        "❌ DISCORD CALLBACK ERROR:"
+      );
+
+      console.error(error);
+
+      return res.redirect(
+        `${FRONTEND_URL}/?discord_error=server_error`
+      );
+    }
+  }
 );
 
 /* =========================================================
    LOGOUT
 ========================================================= */
 
-function logoutHandler(req, res) {
-  /*
-   JWT is stateless.
-
-   The frontend should remove the token.
-   This endpoint exists for compatibility.
-  */
-
-  return res.status(200).json({
-    success: true,
-    message: "Logged out successfully.",
-  });
-}
-
-app.post("/logout", logoutHandler);
-app.post("/api/logout", logoutHandler);
-
-/* =========================================================
-   ADMIN / DATABASE INFO
-========================================================= */
-
-/*
-   This endpoint intentionally does NOT expose database
-   credentials or private information.
-*/
-
-app.get("/api/status", async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT COUNT(*)::INTEGER AS accounts
-      FROM accounts
-    `);
-
+app.post(
+  "/logout",
+  (req, res) => {
     return res.json({
       success: true,
-      status: "online",
-      accounts: result.rows[0].accounts,
-      uptime: process.uptime(),
-      node: process.version,
-      time: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error("Status error:", error);
 
-    return res.status(503).json({
-      success: false,
-      status: "database_error",
+      message:
+        "Logged out successfully.",
     });
   }
-});
+);
+
+app.post(
+  "/api/logout",
+  (req, res) => {
+    return res.json({
+      success: true,
+
+      message:
+        "Logged out successfully.",
+    });
+  }
+);
+
+/* =========================================================
+   STATUS
+========================================================= */
+
+app.get(
+  "/api/status",
+  async (req, res) => {
+    try {
+      const result =
+        await pool.query(`
+          SELECT
+            COUNT(*)::INTEGER AS accounts
+          FROM accounts
+        `);
+
+      return res.json({
+        success: true,
+
+        status:
+          "online",
+
+        accounts:
+          result.rows[0]
+            .accounts,
+
+        uptime:
+          process.uptime(),
+
+        node:
+          process.version,
+
+        time:
+          new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error(
+        "❌ STATUS ERROR:",
+        error
+      );
+
+      return res.status(503).json({
+        success: false,
+
+        status:
+          "database_error",
+      });
+    }
+  }
+);
 
 /* =========================================================
    404
 ========================================================= */
 
-app.use((req, res) => {
-  return res.status(404).json({
-    success: false,
-    error: "NOT_FOUND",
-    message: "Endpoint not found.",
-    path: req.originalUrl,
-  });
-});
+app.use(
+  (req, res) => {
+    return res.status(404).json({
+      success: false,
+
+      error:
+        "NOT_FOUND",
+
+      message:
+        "Endpoint not found.",
+
+      path:
+        req.originalUrl,
+    });
+  }
+);
 
 /* =========================================================
    GLOBAL ERROR HANDLER
 ========================================================= */
 
-app.use((error, req, res, next) => {
-  console.error("❌ GLOBAL ERROR:");
+app.use(
+  (
+    error,
+    req,
+    res,
+    next
+  ) => {
+    console.error(
+      "❌ GLOBAL ERROR:"
+    );
 
-  console.error(error);
+    console.error(error);
 
-  /*
-   PostgreSQL duplicate key.
-   This is the exact error shown in your screenshots.
-  */
+    if (
+      error &&
+      error.code === "23505"
+    ) {
+      return res.status(409).json({
+        success: false,
 
-  if (error && error.code === "23505") {
-    return res.status(409).json({
+        error:
+          "DUPLICATE_VALUE",
+
+        message:
+          "This value already exists.",
+      });
+    }
+
+    if (
+      error instanceof SyntaxError &&
+      error.status === 400 &&
+      error.type ===
+        "entity.parse.failed"
+    ) {
+      return res.status(400).json({
+        success: false,
+
+        error:
+          "INVALID_JSON",
+
+        message:
+          "Invalid JSON request.",
+      });
+    }
+
+    return res.status(500).json({
       success: false,
-      error: "DUPLICATE_VALUE",
+
+      error:
+        "INTERNAL_SERVER_ERROR",
+
       message:
-        "The requested value already exists.",
+        "Internal server error.",
     });
   }
-
-  /*
-   Invalid JSON.
-  */
-
-  if (
-    error instanceof SyntaxError &&
-    error.status === 400 &&
-    error.type === "entity.parse.failed"
-  ) {
-    return res.status(400).json({
-      success: false,
-      error: "INVALID_JSON",
-      message: "Invalid JSON request.",
-    });
-  }
-
-  return res.status(500).json({
-    success: false,
-    error: "INTERNAL_SERVER_ERROR",
-    message: "Internal server error.",
-  });
-});
+);
 
 /* =========================================================
    START SERVER
@@ -1118,27 +2056,49 @@ async function startServer() {
   try {
     await initializeDatabase();
 
-    server = app.listen(PORT, "0.0.0.0", () => {
-      console.log("");
-      console.log("==========================================");
-      console.log("       N10 SERVER STARTED");
-      console.log("==========================================");
-      console.log(`PORT: ${PORT}`);
-      console.log(`ENV:  ${NODE_ENV}`);
-      console.log("DATABASE: PostgreSQL");
-      console.log("STATUS: ONLINE");
-      console.log("==========================================");
-      console.log("");
-    });
+    server =
+      app.listen(
+        PORT,
+        "0.0.0.0",
+        () => {
+          console.log("");
+          console.log(
+            "=========================================="
+          );
+          console.log(
+            "          N10 SERVER STARTED"
+          );
+          console.log(
+            "=========================================="
+          );
+          console.log(
+            `PORT: ${PORT}`
+          );
+          console.log(
+            `ENV: ${NODE_ENV}`
+          );
+          console.log(
+            "DATABASE: PostgreSQL"
+          );
+          console.log(
+            "DISCORD OAUTH: READY"
+          );
+          console.log(
+            "STATUS: ONLINE"
+          );
+          console.log(
+            "=========================================="
+          );
+          console.log("");
+        }
+      );
   } catch (error) {
     console.error("");
-    console.error("❌ SERVER START FAILED");
+    console.error(
+      "❌ SERVER START FAILED"
+    );
     console.error(error);
     console.error("");
-
-    /*
-     Do not keep a broken server running.
-    */
 
     process.exit(1);
   }
@@ -1148,21 +2108,29 @@ async function startServer() {
    GRACEFUL SHUTDOWN
 ========================================================= */
 
-async function shutdown(signal) {
+async function shutdown(
+  signal
+) {
   console.log(
-    `\n⚠️ Received ${signal}. Shutting down...`
+    `\n⚠️ ${signal} received.`
   );
 
   try {
     if (server) {
-      await new Promise((resolve) => {
-        server.close(resolve);
-      });
+      await new Promise(
+        (resolve) => {
+          server.close(
+            resolve
+          );
+        }
+      );
     }
 
     await pool.end();
 
-    console.log("✅ Server stopped cleanly.");
+    console.log(
+      "✅ Server stopped cleanly."
+    );
 
     process.exit(0);
   } catch (error) {
@@ -1175,45 +2143,57 @@ async function shutdown(signal) {
   }
 }
 
-process.on("SIGTERM", () => {
-  shutdown("SIGTERM");
-});
+process.on(
+  "SIGTERM",
+  () => {
+    shutdown(
+      "SIGTERM"
+    );
+  }
+);
 
-process.on("SIGINT", () => {
-  shutdown("SIGINT");
-});
+process.on(
+  "SIGINT",
+  () => {
+    shutdown(
+      "SIGINT"
+    );
+  }
+);
 
 /* =========================================================
    UNHANDLED ERRORS
 ========================================================= */
 
-process.on("unhandledRejection", (reason) => {
-  console.error(
-    "❌ UNHANDLED PROMISE REJECTION:"
-  );
+process.on(
+  "unhandledRejection",
+  (reason) => {
+    console.error(
+      "❌ UNHANDLED PROMISE REJECTION:"
+    );
 
-  console.error(reason);
+    console.error(
+      reason
+    );
+  }
+);
 
-  /*
-   Do NOT automatically kill the server.
-  */
-});
+process.on(
+  "uncaughtException",
+  (error) => {
+    console.error(
+      "❌ UNCAUGHT EXCEPTION:"
+    );
 
-process.on("uncaughtException", (error) => {
-  console.error(
-    "❌ UNCAUGHT EXCEPTION:"
-  );
+    console.error(
+      error
+    );
 
-  console.error(error);
-
-  /*
-   Do not silently continue if Node itself is
-   in an unsafe state.
-   Attempt graceful shutdown.
-  */
-
-  shutdown("uncaughtException");
-});
+    shutdown(
+      "uncaughtException"
+    );
+  }
+);
 
 /* =========================================================
    RUN
