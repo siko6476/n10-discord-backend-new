@@ -25,26 +25,27 @@ const FRONTEND_ORIGIN = String(
 ).replace(/\/+$/, "");
 
 const DISCORD_CLIENT_ID =
-  process.env.DISCORD_CLIENT_ID || "";
+  String(process.env.DISCORD_CLIENT_ID || "").trim();
 
 const DISCORD_CLIENT_SECRET =
-  process.env.DISCORD_CLIENT_SECRET || "";
+  String(process.env.DISCORD_CLIENT_SECRET || "").trim();
 
 const DISCORD_REDIRECT_URI =
-  process.env.DISCORD_REDIRECT_URI ||
-  "https://n10-discord-backend-new.onrender.com/auth/discord/callback";
+  String(
+    process.env.DISCORD_REDIRECT_URI ||
+      "https://n10-discord-backend-new.onrender.com/auth/discord/callback"
+  ).trim();
 
 const DATABASE_URL =
-  process.env.DATABASE_URL || "";
+  String(process.env.DATABASE_URL || "").trim();
 
 const OAUTH_STATE_SECRET =
-  process.env.OAUTH_STATE_SECRET || "";
+  String(process.env.OAUTH_STATE_SECRET || "").trim();
 
 const ADMIN_KEY =
-  process.env.ADMIN_KEY || "";
+  String(process.env.ADMIN_KEY || "").trim();
 
 const SESSION_DAYS = 30;
-
 const SESSION_MS =
   SESSION_DAYS * 24 * 60 * 60 * 1000;
 
@@ -83,13 +84,6 @@ if (!OAUTH_STATE_SECRET) {
   missing.push("OAUTH_STATE_SECRET");
 }
 
-if (missing.length > 0) {
-  console.error(
-    "❌ Missing Environment Variables:",
-    missing.join(", ")
-  );
-}
-
 
 /* =========================================================
    POSTGRESQL
@@ -100,14 +94,16 @@ const pool = new Pool({
 
   ssl:
     process.env.NODE_ENV === "production"
-      ? { rejectUnauthorized: false }
+      ? {
+          rejectUnauthorized: false,
+        }
       : false,
 
   max: 10,
 
   idleTimeoutMillis: 30000,
 
-  connectionTimeoutMillis: 10000
+  connectionTimeoutMillis: 10000,
 });
 
 pool.on("error", (error) => {
@@ -119,20 +115,26 @@ pool.on("error", (error) => {
 
 
 /* =========================================================
-   MIDDLEWARE
+   EXPRESS
 ========================================================= */
 
 app.disable("x-powered-by");
 
 app.set("trust proxy", 1);
 
+
+/* =========================================================
+   CORS
+========================================================= */
+
 const allowedOrigins = [
-  FRONTEND_ORIGIN
+  FRONTEND_ORIGIN,
 ];
 
 app.use(
   cors({
     origin(origin, callback) {
+      // Render health checks / curl / server requests
       if (!origin) {
         return callback(null, true);
       }
@@ -142,7 +144,7 @@ app.use(
       }
 
       console.error(
-        "❌ CORS blocked origin:",
+        "❌ CORS blocked:",
         origin
       );
 
@@ -154,31 +156,38 @@ app.use(
     methods: [
       "GET",
       "POST",
-      "OPTIONS"
+      "OPTIONS",
     ],
 
     allowedHeaders: [
       "Content-Type",
       "Authorization",
-      "X-Admin-Key"
+      "X-Admin-Key",
     ],
 
     credentials: false,
 
-    optionsSuccessStatus: 204
+    optionsSuccessStatus: 204,
   })
 );
 
+app.options("*", cors());
+
+
+/* =========================================================
+   BODY PARSER
+========================================================= */
+
 app.use(
   express.json({
-    limit: "1mb"
+    limit: "1mb",
   })
 );
 
 app.use(
   express.urlencoded({
     extended: true,
-    limit: "1mb"
+    limit: "1mb",
   })
 );
 
@@ -194,7 +203,7 @@ function sendError(
 ) {
   return res.status(status).json({
     success: false,
-    message
+    message,
   });
 }
 
@@ -226,7 +235,10 @@ function validPassword(password) {
     "utf8"
   );
 
-  return length >= 6 && length <= 72;
+  return (
+    length >= 6 &&
+    length <= 72
+  );
 }
 
 
@@ -273,12 +285,19 @@ function noCache(res) {
 }
 
 
+/* =========================================================
+   FRONTEND REDIRECT
+========================================================= */
+
 function frontendRedirect(params = {}) {
   const url = new URL(
     FRONTEND_URL + "/"
   );
 
-  for (const [key, value] of Object.entries(params)) {
+  for (
+    const [key, value]
+    of Object.entries(params)
+  ) {
     if (
       value !== undefined &&
       value !== null
@@ -308,20 +327,22 @@ function createOAuthState() {
   const timestamp =
     Date.now().toString();
 
-  const random = crypto
-    .randomBytes(32)
-    .toString("hex");
+  const random =
+    crypto
+      .randomBytes(32)
+      .toString("hex");
 
   const payload =
     `${timestamp}.${random}`;
 
-  const signature = crypto
-    .createHmac(
-      "sha256",
-      OAUTH_STATE_SECRET
-    )
-    .update(payload)
-    .digest("hex");
+  const signature =
+    crypto
+      .createHmac(
+        "sha256",
+        OAUTH_STATE_SECRET
+      )
+      .update(payload)
+      .digest("hex");
 
   return (
     `${payload}.${signature}`
@@ -346,7 +367,7 @@ function verifyOAuthState(state) {
   const [
     timestamp,
     random,
-    signature
+    signature,
   ] = parts;
 
   if (
@@ -360,13 +381,14 @@ function verifyOAuthState(state) {
   const payload =
     `${timestamp}.${random}`;
 
-  const expected = crypto
-    .createHmac(
-      "sha256",
-      OAUTH_STATE_SECRET
-    )
-    .update(payload)
-    .digest("hex");
+  const expected =
+    crypto
+      .createHmac(
+        "sha256",
+        OAUTH_STATE_SECRET
+      )
+      .update(payload)
+      .digest("hex");
 
   const a = Buffer.from(
     signature,
@@ -383,7 +405,10 @@ function verifyOAuthState(state) {
   }
 
   if (
-    !crypto.timingSafeEqual(a, b)
+    !crypto.timingSafeEqual(
+      a,
+      b
+    )
   ) {
     return false;
   }
@@ -412,7 +437,11 @@ function verifyOAuthState(state) {
 async function createAccessKey(
   discordId
 ) {
-  for (let attempt = 0; attempt < 50; attempt++) {
+  for (
+    let attempt = 0;
+    attempt < 50;
+    attempt++
+  ) {
     const newKey =
       generateAccessKey();
 
@@ -452,12 +481,11 @@ async function createAccessKey(
           `,
           [
             newKey,
-            discordId
+            discordId || null,
           ]
         );
 
       return result.rows[0];
-
     } catch (error) {
       if (error.code === "23505") {
         continue;
@@ -473,10 +501,14 @@ async function createAccessKey(
 }
 
 
+/* =========================================================
+   INVALIDATE OLD DISCORD KEYS
+========================================================= */
+
 async function invalidateOldDiscordKeys(
   discordId,
-  accountId,
-  username
+  accountId = null,
+  username = null
 ) {
   if (!discordId) {
     return;
@@ -506,7 +538,7 @@ async function invalidateOldDiscordKeys(
     [
       discordId,
       username || null,
-      accountId || null
+      accountId || null,
     ]
   );
 }
@@ -521,14 +553,19 @@ async function initDatabase() {
     await pool.connect();
 
   try {
-    await client.query("BEGIN");
+    await client.query(
+      "BEGIN"
+    );
+
+    /* ACCOUNTS */
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS accounts (
         id SERIAL PRIMARY KEY,
 
         username VARCHAR(24)
-          NOT NULL UNIQUE,
+          NOT NULL
+          UNIQUE,
 
         password TEXT,
 
@@ -740,12 +777,13 @@ async function initDatabase() {
       ON sessions(expires_at)
     `);
 
-    await client.query("COMMIT");
-
-    console.log(
-      "✅ Database initialized"
+    await client.query(
+      "COMMIT"
     );
 
+    console.log(
+      "✅ PostgreSQL database initialized"
+    );
   } catch (error) {
     await client.query(
       "ROLLBACK"
@@ -757,7 +795,6 @@ async function initDatabase() {
     );
 
     throw error;
-
   } finally {
     client.release();
   }
@@ -768,17 +805,21 @@ async function initDatabase() {
    HOME
 ========================================================= */
 
-app.get("/", (req, res) => {
-  noCache(res);
+app.get(
+  "/",
+  (req, res) => {
+    noCache(res);
 
-  res.json({
-    success: true,
-    name: "N10 SERVER MENA",
-    status: "online",
-    cors: FRONTEND_ORIGIN,
-    frontend: FRONTEND_URL
-  });
-});
+    res.json({
+      success: true,
+      name: "N10 SERVER MENA",
+      status: "online",
+      database: "PostgreSQL",
+      frontend: FRONTEND_URL,
+      cors: FRONTEND_ORIGIN,
+    });
+  }
+);
 
 
 /* =========================================================
@@ -795,24 +836,23 @@ app.get(
 
       noCache(res);
 
-      res.json({
+      return res.json({
         success: true,
         status: "online",
         database: "connected",
+        frontend: FRONTEND_URL,
         cors: FRONTEND_ORIGIN,
-        frontend: FRONTEND_URL
       });
-
     } catch (error) {
       console.error(
         "❌ Health error:",
         error
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         success: false,
         status: "online",
-        database: "error"
+        database: "error",
       });
     }
   }
@@ -856,16 +896,15 @@ app.get(
           scope:
             "identify email",
 
-          state
+          state,
         });
 
       noCache(res);
 
       return res.redirect(
         "https://discord.com/oauth2/authorize?" +
-        params.toString()
+          params.toString()
       );
-
     } catch (error) {
       console.error(
         "❌ Discord auth error:",
@@ -893,17 +932,20 @@ app.get(
       noCache(res);
 
       const code =
-        typeof req.query.code === "string"
+        typeof req.query.code ===
+        "string"
           ? req.query.code
           : "";
 
       const state =
-        typeof req.query.state === "string"
+        typeof req.query.state ===
+        "string"
           ? req.query.state
           : "";
 
       const discordError =
-        typeof req.query.error === "string"
+        typeof req.query.error ===
+        "string"
           ? req.query.error
           : "";
 
@@ -911,7 +953,7 @@ app.get(
         return res.redirect(
           frontendRedirect({
             discordError:
-              "تم إلغاء تسجيل الدخول عبر Discord."
+              "تم إلغاء تسجيل الدخول عبر Discord.",
           })
         );
       }
@@ -922,7 +964,7 @@ app.get(
         return res.redirect(
           frontendRedirect({
             discordError:
-              "رابط Discord غير صالح أو انتهت صلاحيته."
+              "رابط Discord غير صالح أو انتهت صلاحيته.",
           })
         );
       }
@@ -931,7 +973,7 @@ app.get(
         return res.redirect(
           frontendRedirect({
             discordError:
-              "لم يتم استلام كود Discord."
+              "لم يتم استلام كود Discord.",
           })
         );
       }
@@ -947,7 +989,7 @@ app.get(
 
             headers: {
               "Content-Type":
-                "application/x-www-form-urlencoded"
+                "application/x-www-form-urlencoded",
             },
 
             body:
@@ -964,8 +1006,8 @@ app.get(
                 code,
 
                 redirect_uri:
-                  DISCORD_REDIRECT_URI
-              }).toString()
+                  DISCORD_REDIRECT_URI,
+              }).toString(),
           }
         );
 
@@ -984,7 +1026,7 @@ app.get(
         return res.redirect(
           frontendRedirect({
             discordError:
-              "فشل الحصول على صلاحية Discord."
+              "فشل الحصول على صلاحية Discord.",
           })
         );
       }
@@ -998,8 +1040,8 @@ app.get(
           {
             headers: {
               Authorization:
-                `Bearer ${tokenData.access_token}`
-            }
+                `Bearer ${tokenData.access_token}`,
+            },
           }
         );
 
@@ -1018,7 +1060,7 @@ app.get(
         return res.redirect(
           frontendRedirect({
             discordError:
-              "تعذر الحصول على بيانات Discord."
+              "تعذر الحصول على بيانات Discord.",
           })
         );
       }
@@ -1066,9 +1108,9 @@ app.get(
       );
 
 
-      /* FIND ACCOUNT */
+      /* FIND EXISTING ACCOUNT */
 
-      const existingAccount =
+      const existing =
         await pool.query(
           `
           SELECT
@@ -1087,10 +1129,10 @@ app.get(
       /* EXISTING ACCOUNT */
 
       if (
-        existingAccount.rows.length > 0
+        existing.rows.length > 0
       ) {
         const account =
-          existingAccount.rows[0];
+          existing.rows[0];
 
         await invalidateOldDiscordKeys(
           discordId,
@@ -1121,7 +1163,7 @@ app.get(
             discordGlobalName,
             discordAvatar,
             discordEmail,
-            account.id
+            account.id,
           ]
         );
 
@@ -1131,7 +1173,7 @@ app.get(
         const expiresAt =
           new Date(
             Date.now() +
-            SESSION_MS
+              SESSION_MS
           );
 
         await pool.query(
@@ -1154,7 +1196,7 @@ app.get(
           [
             sessionToken,
             account.id,
-            expiresAt
+            expiresAt,
           ]
         );
 
@@ -1167,9 +1209,6 @@ app.get(
             accessKey:
               newKey.key,
 
-            keyIssuedAt:
-              Date.now(),
-
             username:
               account.username,
 
@@ -1177,13 +1216,16 @@ app.get(
 
             discordUsername,
 
-            discordEmail
+            discordEmail,
+
+            keyIssuedAt:
+              Date.now(),
           })
         );
       }
 
 
-      /* NEW DISCORD ACCOUNT */
+      /* NEW DISCORD USER */
 
       const newKey =
         await createAccessKey(
@@ -1197,17 +1239,16 @@ app.get(
           accessKey:
             newKey.key,
 
-          keyIssuedAt:
-            Date.now(),
-
           discordId,
 
           discordUsername,
 
-          discordEmail
+          discordEmail,
+
+          keyIssuedAt:
+            Date.now(),
         })
       );
-
     } catch (error) {
       console.error(
         "❌ Discord callback error:",
@@ -1226,76 +1267,6 @@ app.get(
 
 
 /* =========================================================
-   CHECK USERNAME
-========================================================= */
-
-app.get(
-  "/api/check-username",
-  async (req, res) => {
-    try {
-      const username =
-        cleanUsername(
-          req.query.username
-        );
-
-      if (!validUsername(username)) {
-        return res.json({
-          success: true,
-          available: false,
-          message:
-            "اسم المستخدم يجب أن يكون بين 3 و24 حرفاً، ويحتوي فقط على الحروف والأرقام و _ . -"
-        });
-      }
-
-      const normalized =
-        normalizeUsername(
-          username
-        );
-
-      const result =
-        await pool.query(
-          `
-          SELECT id
-          FROM accounts
-          WHERE LOWER(username) = $1
-          LIMIT 1
-          `,
-          [normalized]
-        );
-
-      if (result.rows.length > 0) {
-        return res.json({
-          success: true,
-          available: false,
-          message:
-            "اسم المستخدم مستعمل من قبل."
-        });
-      }
-
-      return res.json({
-        success: true,
-        available: true,
-        message:
-          "اسم المستخدم متاح."
-      });
-
-    } catch (error) {
-      console.error(
-        "❌ Username check error:",
-        error
-      );
-
-      return sendError(
-        res,
-        500,
-        "تعذر فحص اسم المستخدم."
-      );
-    }
-  }
-);
-
-
-/* =========================================================
    REGISTER
 ========================================================= */
 
@@ -1306,7 +1277,7 @@ app.post(
       username,
       password,
       confirmPassword,
-      accessKey
+      accessKey,
     } = req.body || {};
 
     const cleanName =
@@ -1320,6 +1291,8 @@ app.post(
         accessKey ?? ""
       ).trim();
 
+
+    /* BASIC VALIDATION */
 
     if (
       !cleanName ||
@@ -1341,7 +1314,7 @@ app.post(
       return sendError(
         res,
         400,
-        "اسم المستخدم يجب أن يكون بين 3 و24 حرفاً، ويحتوي فقط على الحروف والأرقام و _ . -"
+        "اسم المستخدم يجب أن يكون بين 3 و24 حرفاً، ويسمح بالحروف والأرقام و _ . - فقط."
       );
     }
 
@@ -1406,7 +1379,6 @@ app.post(
           [key]
         );
 
-
       if (
         keyResult.rows.length === 0
       ) {
@@ -1421,7 +1393,6 @@ app.post(
         );
       }
 
-
       const keyRow =
         keyResult.rows[0];
 
@@ -1434,7 +1405,7 @@ app.post(
         return sendError(
           res,
           400,
-          "هذا المفتاح مستعمل أو منتهي. ادخل Discord من جديد للحصول على مفتاح جديد."
+          "هذا المفتاح مستعمل. ادخل Discord من جديد للحصول على مفتاح جديد."
         );
       }
 
@@ -1448,10 +1419,10 @@ app.post(
             id,
             username
           FROM accounts
-          WHERE LOWER(username) = $1
+          WHERE LOWER(username) = LOWER($1)
           LIMIT 1
           `,
-          [normalizedName]
+          [cleanName]
         );
 
 
@@ -1465,12 +1436,12 @@ app.post(
         return sendError(
           res,
           409,
-          `اسم المستخدم "${cleanName}" مستعمل من قبل. اختر اسماً آخر.`
+          `اسم المستخدم "${usernameResult.rows[0].username}" مستعمل من قبل. اختر اسماً آخر.`
         );
       }
 
 
-      /* PASSWORD */
+      /* PASSWORD HASH */
 
       const passwordHash =
         await bcrypt.hash(
@@ -1516,7 +1487,7 @@ app.post(
             keyRow.discord_id,
             keyRow.discord_id
               ? "discord"
-              : "password"
+              : "password",
           ]
         );
 
@@ -1525,7 +1496,7 @@ app.post(
         accountResult.rows[0];
 
 
-      /* MARK ACCESS KEY USED */
+      /* USE ACCESS KEY */
 
       await client.query(
         `
@@ -1540,7 +1511,7 @@ app.post(
         [
           account.username,
           account.id,
-          keyRow.id
+          keyRow.id,
         ]
       );
 
@@ -1553,7 +1524,7 @@ app.post(
       const expiresAt =
         new Date(
           Date.now() +
-          SESSION_MS
+            SESSION_MS
         );
 
 
@@ -1577,7 +1548,7 @@ app.post(
         [
           sessionToken,
           account.id,
-          expiresAt
+          expiresAt,
         ]
       );
 
@@ -1618,10 +1589,9 @@ app.post(
             account.discord_id,
 
           createdAt:
-            account.created_at
-        }
+            account.created_at,
+        },
       });
-
     } catch (error) {
       await client.query(
         "ROLLBACK"
@@ -1639,7 +1609,7 @@ app.post(
         return sendError(
           res,
           409,
-          "اسم المستخدم مستعمل من قبل."
+          "اسم المستخدم مستعمل من قبل. اختر اسماً آخر."
         );
       }
 
@@ -1649,7 +1619,6 @@ app.post(
         500,
         "حدث خطأ أثناء إنشاء الحساب."
       );
-
     } finally {
       client.release();
     }
@@ -1667,12 +1636,15 @@ app.post(
     try {
       const {
         username,
-        password
+        password,
       } = req.body || {};
+
+      const cleanName =
+        cleanUsername(username);
 
       const normalizedName =
         normalizeUsername(
-          username
+          cleanName
         );
 
 
@@ -1752,7 +1724,7 @@ app.post(
       const expiresAt =
         new Date(
           Date.now() +
-          SESSION_MS
+            SESSION_MS
         );
 
 
@@ -1776,7 +1748,7 @@ app.post(
         [
           sessionToken,
           account.id,
-          expiresAt
+          expiresAt,
         ]
       );
 
@@ -1816,10 +1788,9 @@ app.post(
             account.discord_id,
 
           createdAt:
-            account.created_at
-        }
+            account.created_at,
+        },
       });
-
     } catch (error) {
       console.error(
         "❌ Login error:",
@@ -1840,7 +1811,9 @@ app.post(
    AUTHENTICATED USER
 ========================================================= */
 
-async function getAuthenticatedUser(req) {
+async function getAuthenticatedUser(
+  req
+) {
   const authorization =
     req.headers.authorization || "";
 
@@ -1877,12 +1850,16 @@ async function getAuthenticatedUser(req) {
         a.auth_provider,
         a.created_at,
         a.last_login_at
+
       FROM sessions s
+
       INNER JOIN accounts a
         ON a.id = s.user_id
+
       WHERE
         s.token = $1
         AND s.expires_at > CURRENT_TIMESTAMP
+
       LIMIT 1
       `,
       [token]
@@ -1920,7 +1897,6 @@ app.get(
         await getAuthenticatedUser(
           req
         );
-
 
       if (!user) {
         return sendError(
@@ -1966,10 +1942,9 @@ app.get(
             user.created_at,
 
           lastLoginAt:
-            user.last_login_at
-        }
+            user.last_login_at,
+        },
       });
-
     } catch (error) {
       console.error(
         "❌ User error:",
@@ -2022,9 +1997,8 @@ app.post(
       return res.json({
         success: true,
         message:
-          "تم تسجيل الخروج."
+          "تم تسجيل الخروج.",
       });
-
     } catch (error) {
       console.error(
         "❌ Logout error:",
@@ -2057,11 +2031,16 @@ app.get(
         );
       }
 
+
       const providedKey =
-        req.headers["x-admin-key"];
+        req.headers[
+          "x-admin-key"
+        ];
+
 
       if (
-        typeof providedKey !== "string" ||
+        typeof providedKey !==
+          "string" ||
         providedKey !== ADMIN_KEY
       ) {
         return sendError(
@@ -2070,6 +2049,7 @@ app.get(
           "Admin key غير صحيحة."
         );
       }
+
 
       const result =
         await pool.query(
@@ -2089,14 +2069,16 @@ app.get(
           `
         );
 
+
       return res.json({
         success: true,
+
         count:
           result.rows.length,
-        keys:
-          result.rows
-      });
 
+        keys:
+          result.rows,
+      });
     } catch (error) {
       console.error(
         "❌ Admin error:",
@@ -2114,7 +2096,7 @@ app.get(
 
 
 /* =========================================================
-   SESSION CLEANUP
+   CLEANUP
 ========================================================= */
 
 async function cleanupSessions() {
@@ -2135,7 +2117,6 @@ async function cleanupSessions() {
         result.rowCount
       );
     }
-
   } catch (error) {
     console.error(
       "❌ Session cleanup error:",
@@ -2151,12 +2132,12 @@ async function cleanupSessions() {
 
 app.use(
   (req, res) => {
-    res.status(404).json({
+    return res.status(404).json({
       success: false,
       message:
         "المسار غير موجود.",
       path:
-        req.path
+        req.path,
     });
   }
 );
@@ -2167,20 +2148,27 @@ app.use(
 ========================================================= */
 
 app.use(
-  (error, req, res, next) => {
+  (
+    error,
+    req,
+    res,
+    next
+  ) => {
     console.error(
       "❌ Unhandled error:",
       error
     );
 
-    if (res.headersSent) {
+    if (
+      res.headersSent
+    ) {
       return next(error);
     }
 
     return res.status(500).json({
       success: false,
       message:
-        "حدث خطأ داخلي في السيرفر."
+        "حدث خطأ داخلي في السيرفر.",
     });
   }
 );
@@ -2192,7 +2180,9 @@ app.use(
 
 async function startServer() {
   try {
-    if (missing.length > 0) {
+    if (
+      missing.length > 0
+    ) {
       console.error(
         "❌ Cannot start server."
       );
@@ -2227,11 +2217,11 @@ async function startServer() {
           );
 
           console.log(
-            `🌐 Frontend URL: ${FRONTEND_URL}`
+            `🌐 Frontend: ${FRONTEND_URL}`
           );
 
           console.log(
-            `🌐 CORS Origin: ${FRONTEND_ORIGIN}`
+            `🌐 CORS: ${FRONTEND_ORIGIN}`
           );
 
           console.log(
@@ -2243,11 +2233,7 @@ async function startServer() {
           );
 
           console.log(
-            "🔑 Access Keys: ON"
-          );
-
-          console.log(
-            "📧 Discord Email: ON"
+            "🔑 Discord Access Keys: ON"
           );
 
           console.log(
@@ -2278,7 +2264,6 @@ async function startServer() {
       cleanupSessions,
       60 * 60 * 1000
     ).unref();
-
   } catch (error) {
     console.error(
       "❌ Server startup failed:",
