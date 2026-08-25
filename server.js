@@ -1167,16 +1167,10 @@ app.get(
 
 
       /* =====================================
-         SUCCESS
+         SUCCESS REDIRECT TO GAME
       ===================================== */
 
-      return res.redirect(
-        frontendRedirect({
-          login: "success",
-          username:
-            account.username
-        })
-      );
+      return res.redirect("freefire://");
 
     } catch (error) {
 
